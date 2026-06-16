@@ -1,0 +1,42 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  cloud-run:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.GOOGLE_CREDENTIALS }}
+      - id: deploy
+        uses: google-github-actions/deploy-cloudrun@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          service: mainroom
+          region: ${{ vars.GCP_REGION || 'us-central1' }}
+          source: .
+          env_vars: |-
+            NODE_ENV=production
+            API_TOKEN=${{ secrets.API_TOKEN }}
+            CORS_ORIGIN=${{ vars.CORS_ORIGIN || 'https://mainroom.sh' }}
+          flags: --allow-unauthenticated
+      - name: Smoke test deployment
+        env:
+          API_TOKEN: ${{ secrets.API_TOKEN }}
+          SERVICE_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          curl -fsS "$SERVICE_URL/health"
+          curl -fsS -H "Authorization: Bearer $API_TOKEN" "$SERVICE_URL/v0/ping"
