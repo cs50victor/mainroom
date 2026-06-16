@@ -55,22 +55,27 @@ app.get(
   (c) => c.var.res(200, { ok: true, service: "mainroom" }),
 );
 
-app.use("/api/*", bearerAuth({ token: apiToken }));
+const v0 = new Hono();
 
-app.get(
-  "/api/hello",
+v0.use("*", bearerAuth({ token: apiToken }));
+
+v0.get(
+  "/ping",
   openApi({
-    tags: ["API"],
-    summary: "Authenticated greeting",
+    tags: ["V0"],
+    summary: "Authenticated ping",
     security: [{ bearerAuth: [] }],
     responses: {
       200: z.object({
-        message: z.string(),
+        ok: z.boolean(),
+        version: z.string(),
       }),
     },
   }),
-  (c) => c.var.res(200, { message: "Hello from Hono on Bun" }),
+  (c) => c.var.res(200, { ok: true, version: "v0" }),
 );
+
+app.route("/v0", v0);
 
 const openApiDocument = createOpenApiDocument(
   app,
