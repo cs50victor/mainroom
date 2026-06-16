@@ -122,7 +122,7 @@ v0.get(
   "/ping",
   openApi({
     tags: ["V0"],
-    summary: "Clerk API key authenticated ping",
+    summary: "API key authenticated ping",
     security: [{ clerkApiKey: [] }],
     responses: {
       200: z.object({
