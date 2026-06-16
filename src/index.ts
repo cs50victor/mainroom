@@ -34,13 +34,13 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 
 function bearerToken(request: Request): string | undefined {
   const authorization = request.headers.get("Authorization");
+  const prefix = "Bearer ";
 
-  if (!authorization) {
+  if (!authorization?.startsWith(prefix)) {
     return undefined;
   }
 
-  const [scheme, token] = authorization.split(/\s+/, 2);
-  return scheme.toLowerCase() === "bearer" && token ? token : undefined;
+  return authorization.slice(prefix.length) || undefined;
 }
 
 async function verifyClerkApiKey(secret: string): Promise<boolean> {
