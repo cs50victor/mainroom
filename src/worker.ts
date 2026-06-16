@@ -3,7 +3,7 @@ import { Container, getRandom } from "@cloudflare/containers";
 const instanceCount = 3;
 
 type Env = {
-  API_TOKEN: string;
+  CLERK_SECRET_KEY: string;
   CORS_ORIGIN?: string;
   MAINROOM_CONTAINER: DurableObjectNamespace<MainroomContainer>;
 };
@@ -15,7 +15,7 @@ export class MainroomContainer extends Container<Env> {
   constructor(ctx: ConstructorParameters<typeof Container<Env>>[0], env: Env) {
     super(ctx, env);
     this.envVars = {
-      API_TOKEN: env.API_TOKEN,
+      CLERK_SECRET_KEY: env.CLERK_SECRET_KEY,
       CORS_ORIGIN: env.CORS_ORIGIN ?? "https://mainroom.sh",
       NODE_ENV: "production",
       PORT: "3000",

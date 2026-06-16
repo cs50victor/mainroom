@@ -30,18 +30,18 @@ jobs:
           command: deploy
           packageManager: bun
           secrets: |
-            API_TOKEN
+            CLERK_SECRET_KEY
           wranglerVersion: 4.100.0
         env:
-          API_TOKEN: ${{ secrets.API_TOKEN }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
       - name: Smoke test deployment
         env:
-          API_TOKEN: ${{ secrets.API_TOKEN }}
+          CLERK_API_KEY: ${{ secrets.CLERK_API_KEY }}
           SERVICE_URL: https://mainroom.sh
         run: |
           for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18; do
             if curl -fsS "$SERVICE_URL/health"; then
-              curl -fsS -H "Authorization: Bearer $API_TOKEN" "$SERVICE_URL/v0/ping"
+              curl -fsS -H "Authorization: Bearer $CLERK_API_KEY" "$SERVICE_URL/v0/ping"
               exit 0
             fi
             sleep 10
