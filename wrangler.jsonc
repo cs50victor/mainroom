@@ -21,7 +21,7 @@
     "CORS_ORIGIN": "https://mainroom.sh",
   },
   "secrets": {
-    "required": ["API_TOKEN"],
+    "required": ["CLERK_SECRET_KEY"],
   },
   "containers": [
     {

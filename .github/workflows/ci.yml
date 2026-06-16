@@ -22,7 +22,7 @@ jobs:
       - run: docker build -t mainroom-bun-server .
       - name: Smoke test Docker image
         run: |
-          docker run --rm -d --name mainroom-ci -p 3000:3000 -e API_TOKEN=ci-token mainroom-bun-server
+          docker run --rm -d --name mainroom-ci -p 3000:3000 -e AUTH_MODE=mock -e NODE_ENV=test mainroom-bun-server
           trap 'docker stop mainroom-ci' EXIT
           for attempt in 1 2 3 4 5 6 7 8 9 10; do
             if curl -fsS http://127.0.0.1:3000/health; then
