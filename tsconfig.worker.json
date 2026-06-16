@@ -1,11 +1,11 @@
 {
   "compilerOptions": {
-    "lib": ["DOM", "ESNext"],
+    "lib": ["ESNext"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "strict": true,
     "target": "ESNext",
-    "types": ["bun"]
+    "types": ["@cloudflare/workers-types"]
   },
-  "include": ["src/index.ts"]
+  "include": ["src/worker.ts"]
 }

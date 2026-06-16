@@ -1,0 +1,48 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mainroom",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-06-16",
+  "workers_dev": false,
+  "observability": {
+    "enabled": true,
+  },
+  "routes": [
+    {
+      "pattern": "mainroom.sh/*",
+      "zone_name": "mainroom.sh",
+    },
+    {
+      "pattern": "*.mainroom.sh/*",
+      "zone_name": "mainroom.sh",
+    },
+  ],
+  "vars": {
+    "CORS_ORIGIN": "https://mainroom.sh",
+  },
+  "secrets": {
+    "required": ["API_TOKEN"],
+  },
+  "containers": [
+    {
+      "class_name": "MainroomContainer",
+      "image": "./Dockerfile",
+      "instance_type": "lite",
+      "max_instances": 3,
+    },
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "class_name": "MainroomContainer",
+        "name": "MAINROOM_CONTAINER",
+      },
+    ],
+  },
+  "migrations": [
+    {
+      "new_sqlite_classes": ["MainroomContainer"],
+      "tag": "v1",
+    },
+  ],
+}
