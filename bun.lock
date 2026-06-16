@@ -12,6 +12,7 @@
       },
       "devDependencies": {
         "@types/bun": "^1.3.14",
+        "prettier": "^3.8.4",
         "typescript": "^6.0.3",
       },
     },
@@ -42,6 +43,8 @@
     "hono-zod-openapi": ["hono-zod-openapi@1.1.1", "", { "dependencies": { "@hono/zod-validator": "^0.7.6", "zod-openapi": "^5.4.6" }, "peerDependencies": { "hono": "^4.8.0", "zod": "^4.0.0" } }, "sha512-L8ZRSxOYnPYxEmj2O1MgRKzEpa0nW3ThZyczwvq6kc9q2pwAyys5qKkEi2AYRfIMgu6eXptgM9QaoqZbZJeYfw=="],
 
     "nanoid": ["nanoid@5.1.11", "", { "bin": { "nanoid": "bin/nanoid.js" } }, "sha512-v+KEsUv2ps74PaSKv0gHTxTCgMXOIfBEbaqa6w6ISIGC7ZsvHN4N9oJ8d4cmf0n5oTzQz2SLmThbQWhjd/8eKg=="],
+
+    "prettier": ["prettier@3.8.4", "", { "bin": { "prettier": "bin/prettier.cjs" } }, "sha512-N2MylSdi48+5N/6S5j+maeHbUSIzzZ5uOcX5Hm4QpV8Dkb1HFjfAKTKX6yNPJQD9AhcT3ifHNB66tWTTJDi11Q=="],
 
     "tagged-tag": ["tagged-tag@1.0.0", "", {}, "sha512-yEFYrVhod+hdNyx7g5Bnkkb0G6si8HJurOoOEgC8B/O0uXLHlaey/65KRv6cuWBNhBgHKAROVpc7QyYqE5gFng=="],
 
