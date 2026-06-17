@@ -21,7 +21,7 @@
     "CORS_ORIGIN": "https://mainroom.sh",
   },
   "secrets": {
-    "required": ["CLERK_SECRET_KEY"],
+    "required": ["CLERK_SECRET_KEY", "MACHINE_CONTROL_TOKEN"],
   },
   "containers": [
     {
@@ -30,6 +30,12 @@
       "instance_type": "lite",
       "max_instances": 3,
     },
+    {
+      "class_name": "UserMachineContainer",
+      "image": "./Dockerfile",
+      "instance_type": "lite",
+      "max_instances": 14997,
+    },
   ],
   "durable_objects": {
     "bindings": [
@@ -37,12 +43,20 @@
         "class_name": "MainroomContainer",
         "name": "MAINROOM_CONTAINER",
       },
+      {
+        "class_name": "UserMachineContainer",
+        "name": "USER_MACHINE_CONTAINER",
+      },
     ],
   },
   "migrations": [
     {
       "new_sqlite_classes": ["MainroomContainer"],
       "tag": "v1",
+    },
+    {
+      "new_sqlite_classes": ["UserMachineContainer"],
+      "tag": "v2",
     },
   ],
 }
