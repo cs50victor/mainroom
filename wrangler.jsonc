@@ -21,7 +21,14 @@
     "CORS_ORIGIN": "https://mainroom.sh",
   },
   "secrets": {
-    "required": ["CLERK_SECRET_KEY", "MACHINE_CONTROL_TOKEN"],
+    "required": [
+      "AWS_ACCESS_KEY_ID",
+      "AWS_SECRET_ACCESS_KEY",
+      "CLERK_SECRET_KEY",
+      "MACHINE_CONTROL_TOKEN",
+      "R2_ACCOUNT_ID",
+      "R2_BUCKET_NAME",
+    ],
   },
   "containers": [
     {
@@ -32,7 +39,7 @@
     },
     {
       "class_name": "UserMachineContainer",
-      "image": "./Dockerfile",
+      "image": "./Dockerfile.user-machine",
       "instance_type": "lite",
       "max_instances": 14997,
     },

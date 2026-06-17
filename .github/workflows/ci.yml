@@ -20,6 +20,7 @@ jobs:
       - run: bun run lint
       - run: bun run typecheck
       - run: docker build -t mainroom-bun-server .
+      - run: docker build -f Dockerfile.user-machine -t mainroom-user-machine .
       - name: Smoke test Docker image
         run: |
           docker run --rm -d --name mainroom-ci -p 3000:3000 -e AUTH_MODE=mock -e NODE_ENV=test mainroom-bun-server
@@ -32,4 +33,17 @@ jobs:
             sleep 1
           done
           docker logs mainroom-ci
+          exit 1
+      - name: Smoke test user machine Docker image
+        run: |
+          docker run --rm -d --name mainroom-user-machine-ci -p 3001:3000 -e AUTH_MODE=mock -e NODE_ENV=test -e USER_MACHINE_BUCKET_MODE=local -e R2_BUCKET_PREFIX=ci/user mainroom-user-machine
+          trap 'docker stop mainroom-user-machine-ci' EXIT
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -fsS http://127.0.0.1:3001/health; then
+              curl -fsS -H 'Authorization: Bearer ci-token' http://127.0.0.1:3001/v0/ping
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs mainroom-user-machine-ci
           exit 1
