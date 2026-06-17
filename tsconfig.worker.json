@@ -3,6 +3,7 @@
     "lib": ["ESNext"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "skipLibCheck": true,
     "strict": true,
     "target": "ESNext",
     "types": ["@cloudflare/workers-types"]

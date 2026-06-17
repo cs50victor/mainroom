@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { openApi } from "hono-zod-openapi";
-import { z } from "zod";
 
 import {
   ClerkApiError,
@@ -14,85 +13,19 @@ import {
   verifyApiKey,
   type AppConfig,
 } from "../helpers";
-
-const errorSchema = z.object({
-  error: z.string(),
-});
-
-const apiKeySchema = z.object({
-  object: z.literal("api_key"),
-  id: z.string(),
-  type: z.string(),
-  subject: z.string(),
-  name: z.string(),
-  description: z.string().nullable().optional(),
-  claims: z.unknown().nullable(),
-  scopes: z.array(z.string()),
-  secret: z.string().optional(),
-  revoked: z.boolean(),
-  revocation_reason: z.string().nullable(),
-  expired: z.boolean(),
-  expiration: z.number().nullable(),
-  created_by: z.string().nullable(),
-  last_used_at: z.number().nullable(),
-  created_at: z.number(),
-  updated_at: z.number(),
-});
-
-const apiKeyListSchema = z.object({
-  data: z.array(apiKeySchema),
-  total_count: z.number(),
-});
-
-const createApiKeySchema = z.object({
-  type: z.string().min(3).max(25).optional(),
-  name: z.string().min(3),
-  description: z.string().max(255).nullable().optional(),
-  subject: z.string().min(1),
-  claims: z.unknown().nullable().optional(),
-  scopes: z.array(z.string()).optional(),
-  created_by: z.string().nullable().optional(),
-  seconds_until_expiration: z.number().positive().nullable().optional(),
-});
-
-const updateApiKeySchema = z.object({
-  claims: z.unknown().nullable().optional(),
-  scopes: z.array(z.string()).optional(),
-  description: z.string().max(255).nullable().optional(),
-  subject: z.string().min(1).optional(),
-  seconds_until_expiration: z.number().positive().nullable().optional(),
-});
-
-const listApiKeysQuerySchema = z.object({
-  type: z.string().min(3).optional(),
-  subject: z.string().min(1),
-  include_invalid: z.enum(["true", "false"]).optional(),
-  limit: z.coerce.number().int().min(1).max(100).optional(),
-  offset: z.coerce.number().int().min(0).optional(),
-  query: z.string().optional(),
-});
-
-const apiKeyIdParamSchema = z.object({
-  id: z.string().min(1),
-});
-
-const revokeApiKeySchema = z.object({
-  revocation_reason: z.string().nullable().optional(),
-});
-
-const verifyApiKeySchema = z.object({
-  secret: z.string().min(1),
-});
-
-const apiKeySecretSchema = z.object({
-  secret: z.string(),
-});
-
-const deletedApiKeySchema = z.object({
-  id: z.string(),
-  object: z.literal("api_key"),
-  deleted: z.literal(true),
-});
+import {
+  apiKeyIdParamSchema,
+  apiKeyListSchema,
+  apiKeySchema,
+  apiKeySecretSchema,
+  createApiKeySchema,
+  deletedApiKeySchema,
+  errorSchema,
+  listApiKeysQuerySchema,
+  revokeApiKeySchema,
+  updateApiKeySchema,
+  verifyApiKeySchema,
+} from "../schemas/api-keys";
 
 function clerkError(error: unknown): {
   error: string;

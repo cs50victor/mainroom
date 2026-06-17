@@ -1,68 +1,38 @@
+import {
+  createClerkClient,
+  type APIKey,
+  type ClerkClient,
+} from "@clerk/backend";
+import { isClerkAPIResponseError } from "@clerk/backend/errors";
+
+import type {
+  CreateApiKeyParams,
+  ListApiKeysParams,
+  RevokeApiKeyParams,
+  UpdateApiKeyParams,
+  VerifyApiKeyParams,
+} from "./schemas/api-keys";
+
 export type AuthMode = "clerk" | "mock";
 
 export type AppConfig = {
   authMode: AuthMode;
   clerkApiUrl: string;
+  clerkApiVersion: string;
   clerkSecretKey?: string;
   corsOrigins: string[];
   port: number;
 };
 
-export type CreateApiKeyParams = {
-  type?: string;
-  name: string;
-  description?: string | null;
-  subject: string;
-  claims?: unknown | null;
-  scopes?: string[];
-  created_by?: string | null;
-  seconds_until_expiration?: number | null;
-};
-
-export type ListApiKeysParams = {
-  type?: string;
-  subject: string;
-  include_invalid?: "true" | "false";
-  limit?: number;
-  offset?: number;
-  query?: string;
-};
-
-export type UpdateApiKeyParams = {
-  claims?: unknown | null;
-  scopes?: string[];
-  description?: string | null;
-  subject?: string;
-  seconds_until_expiration?: number | null;
-};
-
-export type RevokeApiKeyParams = {
-  revocation_reason?: string | null;
-};
-
-export type ApiKeyResource = {
-  object: "api_key";
-  id: string;
-  type: string;
-  subject: string;
-  name: string;
-  description?: string | null;
-  claims: unknown | null;
-  scopes: string[];
-  secret?: string;
-  revoked: boolean;
-  revocation_reason: string | null;
-  expired: boolean;
-  expiration: number | null;
-  created_by: string | null;
-  last_used_at: number | null;
-  created_at: number;
-  updated_at: number;
-};
-
 type Env = Record<string, string | undefined>;
 
-type MockApiKey = ApiKeyResource & {
+type ApiKeyList = Awaited<ReturnType<ClerkClient["apiKeys"]["list"]>>;
+type DeletedObject = Awaited<ReturnType<ClerkClient["apiKeys"]["delete"]>>;
+type Mutable<T> = {
+  -readonly [K in keyof T]: T[K];
+};
+
+type MockApiKey = Mutable<APIKey> & {
   secret: string;
 };
 
@@ -107,7 +77,11 @@ export function readConfig(env: Env): AppConfig {
 
   return {
     authMode,
-    clerkApiUrl: env.CLERK_API_URL ?? "https://api.clerk.com/v1",
+    clerkApiUrl: normalizeClerkApiUrl(
+      env.CLERK_API_URL ?? "https://api.clerk.com",
+      env.CLERK_API_VERSION ?? "v1",
+    ),
+    clerkApiVersion: env.CLERK_API_VERSION ?? "v1",
     clerkSecretKey,
     corsOrigins,
     port,
@@ -144,121 +118,99 @@ export async function isApiKeyValid(
 export async function createApiKey(
   config: AppConfig,
   params: CreateApiKeyParams,
-): Promise<unknown> {
+): Promise<APIKey> {
   if (config.authMode === "mock") {
     return createMockApiKey(params);
   }
 
-  return clerkRequest(config, "/api_keys", {
-    method: "POST",
-    body: params,
-  });
+  return clerkApi(config, (client) => client.apiKeys.create(params));
 }
 
 export async function listApiKeys(
   config: AppConfig,
   params: ListApiKeysParams,
-): Promise<unknown> {
+): Promise<ApiKeyList> {
   if (config.authMode === "mock") {
     return listMockApiKeys(params);
   }
 
-  return clerkRequest(config, "/api_keys", {
-    method: "GET",
-    query: params,
-  });
+  return clerkApi(config, (client) => client.apiKeys.list(params));
 }
 
 export async function getApiKey(
   config: AppConfig,
   apiKeyID: string,
-): Promise<unknown> {
+): Promise<APIKey> {
   if (config.authMode === "mock") {
     return withoutSecret(getMockApiKey(apiKeyID));
   }
 
-  return clerkRequest(config, `/api_keys/${encodeURIComponent(apiKeyID)}`, {
-    method: "GET",
-  });
+  return clerkApi(config, (client) => client.apiKeys.get(apiKeyID));
 }
 
 export async function updateApiKey(
   config: AppConfig,
   apiKeyID: string,
   params: UpdateApiKeyParams,
-): Promise<unknown> {
+): Promise<APIKey> {
   if (config.authMode === "mock") {
     return updateMockApiKey(apiKeyID, params);
   }
 
-  return clerkRequest(config, `/api_keys/${encodeURIComponent(apiKeyID)}`, {
-    method: "PATCH",
-    body: params,
-  });
+  return clerkApi(config, (client) =>
+    client.apiKeys.update({ apiKeyId: apiKeyID, ...params }),
+  );
 }
 
 export async function deleteApiKey(
   config: AppConfig,
   apiKeyID: string,
-): Promise<unknown> {
+): Promise<DeletedObject> {
   if (config.authMode === "mock") {
     getMockApiKey(apiKeyID);
     mockApiKeys.delete(apiKeyID);
-    return { id: apiKeyID, object: "api_key", deleted: true };
+    return { id: apiKeyID, slug: null, object: "api_key", deleted: true };
   }
 
-  return clerkRequest(config, `/api_keys/${encodeURIComponent(apiKeyID)}`, {
-    method: "DELETE",
-  });
+  return clerkApi(config, (client) => client.apiKeys.delete(apiKeyID));
 }
 
 export async function getApiKeySecret(
   config: AppConfig,
   apiKeyID: string,
-): Promise<unknown> {
+): Promise<{ secret: string }> {
   if (config.authMode === "mock") {
     return { secret: getMockApiKey(apiKeyID).secret };
   }
 
-  return clerkRequest(
-    config,
-    `/api_keys/${encodeURIComponent(apiKeyID)}/secret`,
-    {
-      method: "GET",
-    },
-  );
+  return clerkApi(config, (client) => client.apiKeys.getSecret(apiKeyID));
 }
 
 export async function revokeApiKey(
   config: AppConfig,
   apiKeyID: string,
   params: RevokeApiKeyParams,
-): Promise<unknown> {
+): Promise<APIKey> {
   if (config.authMode === "mock") {
     const apiKey = getMockApiKey(apiKeyID);
     const now = Date.now();
 
     apiKey.revoked = true;
-    apiKey.revocation_reason = params.revocation_reason ?? null;
-    apiKey.updated_at = now;
+    apiKey.revocationReason = params.revocationReason ?? null;
+    apiKey.updatedAt = now;
 
     return withoutSecret(apiKey);
   }
 
-  return clerkRequest(
-    config,
-    `/api_keys/${encodeURIComponent(apiKeyID)}/revoke`,
-    {
-      method: "POST",
-      body: params,
-    },
+  return clerkApi(config, (client) =>
+    client.apiKeys.revoke({ apiKeyId: apiKeyID, ...params }),
   );
 }
 
 export async function verifyApiKey(
   config: AppConfig,
-  params: { secret: string },
-): Promise<unknown> {
+  params: VerifyApiKeyParams,
+): Promise<APIKey> {
   if (config.authMode === "mock") {
     const apiKey = [...mockApiKeys.values()].find(
       (candidate) => candidate.secret === params.secret,
@@ -268,159 +220,89 @@ export async function verifyApiKey(
       throw new ClerkApiError(401, "Unauthorized", undefined);
     }
 
-    apiKey.last_used_at = Date.now();
+    apiKey.lastUsedAt = Date.now();
     return withoutSecret(apiKey);
   }
 
-  return clerkRequest(config, "/api_keys/verify", {
-    method: "POST",
-    body: params,
-  });
+  return clerkApi(config, (client) => client.apiKeys.verify(params.secret));
 }
 
-async function clerkRequest(
+async function clerkApi<T>(
   config: AppConfig,
-  path: string,
-  init: {
-    method: string;
-    body?: unknown;
-    query?: Record<string, string | number | undefined>;
-  },
-): Promise<unknown> {
+  callback: (client: ClerkClient) => Promise<T>,
+): Promise<T> {
   if (!config.clerkSecretKey) {
     throw new Error("CLERK_SECRET_KEY is required when AUTH_MODE=clerk");
   }
 
-  const url = new URL(path, config.clerkApiUrl);
-
-  for (const [key, value] of Object.entries(init.query ?? {})) {
-    if (value !== undefined) {
-      url.searchParams.set(key, String(value));
-    }
-  }
-
-  const response = await fetch(url, {
-    method: init.method,
-    headers: {
-      Authorization: `Bearer ${config.clerkSecretKey}`,
-      "Clerk-API-Version": "2026-05-12",
-      "Content-Type": "application/json",
-      "User-Agent": "mainroom/0.1.0",
-    },
-    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+  const client = createClerkClient({
+    secretKey: config.clerkSecretKey,
+    apiUrl: config.clerkApiUrl,
+    apiVersion: config.clerkApiVersion,
+    userAgent: "mainroom/0.1.0",
+    telemetry: { disabled: true },
   });
 
-  const payload = await parseJsonResponse(response);
-
-  if (!response.ok) {
-    throw new ClerkApiError(
-      response.status,
-      clerkErrorMessage(payload, response.statusText),
-      payload,
-    );
-  }
-
-  return payload;
-}
-
-async function parseJsonResponse(response: Response): Promise<unknown> {
-  const text = await response.text();
-
-  if (!text) {
-    return null;
-  }
-
   try {
-    return JSON.parse(text);
-  } catch {
-    return text;
+    return await callback(client);
+  } catch (error) {
+    if (isClerkAPIResponseError(error)) {
+      throw new ClerkApiError(
+        error.status ?? 502,
+        error.errors[0]?.longMessage ??
+          error.errors[0]?.message ??
+          "Clerk request failed",
+        error,
+      );
+    }
+
+    throw error;
   }
 }
 
-function clerkErrorMessage(payload: unknown, fallback: string): string {
-  if (typeof payload !== "object" || payload === null) {
-    return fallback || "Clerk request failed";
-  }
-
-  const errors = (payload as { errors?: unknown }).errors;
-
-  if (!Array.isArray(errors)) {
-    return fallback || "Clerk request failed";
-  }
-
-  const firstError = errors[0];
-
-  if (typeof firstError !== "object" || firstError === null) {
-    return fallback || "Clerk request failed";
-  }
-
-  const message = (firstError as { long_message?: unknown; message?: unknown })
-    .long_message;
-
-  if (typeof message === "string") {
-    return message;
-  }
-
-  const shortMessage = (firstError as { message?: unknown }).message;
-
-  return typeof shortMessage === "string"
-    ? shortMessage
-    : fallback || "Clerk request failed";
-}
-
-function createMockApiKey(params: CreateApiKeyParams): ApiKeyResource {
+function createMockApiKey(params: CreateApiKeyParams): APIKey {
   const now = Date.now();
   const secret = mockSecret();
   const apiKey: MockApiKey = {
-    object: "api_key",
     id: mockId(),
-    type: params.type ?? "api_key",
+    type: "api_key",
     subject: params.subject,
     name: params.name,
-    description: params.description,
+    description: params.description ?? null,
     claims: params.claims ?? null,
     scopes: params.scopes ?? [],
     secret,
     revoked: false,
-    revocation_reason: null,
+    revocationReason: null,
     expired: false,
     expiration:
-      params.seconds_until_expiration == null
+      params.secondsUntilExpiration == null
         ? null
-        : now + params.seconds_until_expiration * 1000,
-    created_by: params.created_by ?? null,
-    last_used_at: null,
-    created_at: now,
-    updated_at: now,
+        : now + params.secondsUntilExpiration * 1000,
+    createdBy: params.createdBy ?? null,
+    lastUsedAt: null,
+    createdAt: now,
+    updatedAt: now,
   };
 
   mockApiKeys.set(apiKey.id, apiKey);
   return { ...apiKey };
 }
 
-function listMockApiKeys(params: ListApiKeysParams): unknown {
-  const includeInvalid = params.include_invalid === "true";
-  const query = params.query?.toLowerCase();
+function listMockApiKeys(params: ListApiKeysParams): ApiKeyList {
+  const includeInvalid = params.includeInvalid ?? false;
   const offset = params.offset ?? 0;
   const limit = params.limit ?? 10;
   const data = [...mockApiKeys.values()]
     .filter((apiKey) => apiKey.subject === params.subject)
-    .filter((apiKey) => !params.type || apiKey.type === params.type)
     .filter(
       (apiKey) => includeInvalid || (!apiKey.revoked && !isExpired(apiKey)),
-    )
-    .filter(
-      (apiKey) =>
-        !query ||
-        apiKey.id.toLowerCase().includes(query) ||
-        apiKey.name.toLowerCase().includes(query) ||
-        apiKey.description?.toLowerCase().includes(query),
     )
     .map(withoutSecret);
 
   return {
     data: data.slice(offset, offset + limit),
-    total_count: data.length,
+    totalCount: data.length,
   };
 }
 
@@ -437,32 +319,43 @@ function getMockApiKey(apiKeyID: string): MockApiKey {
 function updateMockApiKey(
   apiKeyID: string,
   params: UpdateApiKeyParams,
-): ApiKeyResource {
+): APIKey {
   const apiKey = getMockApiKey(apiKeyID);
   const now = Date.now();
 
   if ("claims" in params) apiKey.claims = params.claims ?? null;
   if ("scopes" in params) apiKey.scopes = params.scopes ?? [];
-  if ("description" in params) apiKey.description = params.description;
-  if (params.subject !== undefined) apiKey.subject = params.subject;
-  if ("seconds_until_expiration" in params) {
+  if ("description" in params) apiKey.description = params.description ?? null;
+  apiKey.subject = params.subject;
+  if ("secondsUntilExpiration" in params) {
     apiKey.expiration =
-      params.seconds_until_expiration == null
+      params.secondsUntilExpiration == null
         ? null
-        : now + params.seconds_until_expiration * 1000;
+        : now + params.secondsUntilExpiration * 1000;
   }
-  apiKey.updated_at = now;
+  apiKey.updatedAt = now;
 
   return withoutSecret(apiKey);
 }
 
-function withoutSecret(apiKey: MockApiKey): ApiKeyResource {
+function withoutSecret(apiKey: MockApiKey): APIKey {
   const { secret: _secret, ...rest } = apiKey;
   return { ...rest, expired: isExpired(apiKey) };
 }
 
-function isExpired(apiKey: ApiKeyResource): boolean {
+function isExpired(apiKey: APIKey): boolean {
   return apiKey.expiration !== null && apiKey.expiration <= Date.now();
+}
+
+function normalizeClerkApiUrl(apiUrl: string, apiVersion: string): string {
+  const url = new URL(apiUrl);
+  const versionSuffix = `/${apiVersion}`;
+
+  if (url.pathname.endsWith(versionSuffix)) {
+    url.pathname = url.pathname.slice(0, -versionSuffix.length) || "/";
+  }
+
+  return url.toString().replace(/\/$/, "");
 }
 
 function mockId(): string {
