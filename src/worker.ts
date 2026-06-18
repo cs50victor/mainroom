@@ -4,19 +4,22 @@ const instanceCount = 3;
 const machinePath = "/v0/machines";
 
 type Env = {
-  AWS_ACCESS_KEY_ID?: string;
-  AWS_SECRET_ACCESS_KEY?: string;
+  AWS_ACCESS_KEY_ID: string;
+  AWS_ALLOW_HTTP?: string;
+  AWS_DEFAULT_REGION: string;
+  AWS_ENDPOINT?: string;
+  AWS_ENDPOINT_URL_S3: string;
+  AWS_REQUEST_PAYER?: string;
+  AWS_SECRET_ACCESS_KEY: string;
+  AWS_SESSION_TOKEN?: string;
   CLERK_SECRET_KEY: string;
   CORS_ORIGIN?: string;
   MACHINE_CONTROL_TOKEN: string;
   MAINROOM_CONTAINER: DurableObjectNamespace<MainroomContainer>;
-  R2_ACCOUNT_ID?: string;
-  R2_BUCKET_NAME?: string;
   USER_MACHINE_CONTAINER: DurableObjectNamespace<UserMachineContainer>;
 };
 
 type UserMachineRecord = {
-  bucketPrefix: string;
   id: string;
   subject: string;
 };
@@ -53,7 +56,6 @@ export class UserMachineContainer extends Container<Env> {
   }
 
   async create(record: UserMachineRecord): Promise<{
-    bucketPrefix: string;
     id: string;
     state: Awaited<ReturnType<UserMachineContainer["getState"]>>;
     subject: string;
@@ -62,7 +64,6 @@ export class UserMachineContainer extends Container<Env> {
     await this.startMachine(record);
 
     return {
-      bucketPrefix: record.bucketPrefix,
       id: record.id,
       state: await this.getState(),
       subject: record.subject,
@@ -70,7 +71,6 @@ export class UserMachineContainer extends Container<Env> {
   }
 
   async info(): Promise<{
-    bucketPrefix?: string;
     id?: string;
     state: Awaited<ReturnType<UserMachineContainer["getState"]>>;
     subject?: string;
@@ -103,21 +103,11 @@ export class UserMachineContainer extends Container<Env> {
   }
 
   private async startMachine(record: UserMachineRecord): Promise<void> {
-    const r2 = r2Config(this.env);
-
-    if (r2 instanceof Response) {
-      throw new Error("User machine R2 configuration is incomplete");
-    }
-
     await this.startAndWaitForPorts({
       startOptions: {
         envVars: {
           ...this.envVars,
-          AWS_ACCESS_KEY_ID: r2.awsAccessKeyId,
-          AWS_SECRET_ACCESS_KEY: r2.awsSecretAccessKey,
-          R2_ACCOUNT_ID: r2.accountId,
-          R2_BUCKET_NAME: r2.bucketName,
-          R2_BUCKET_PREFIX: record.bucketPrefix,
+          ...tokenproxyS3EnvVars(this.env),
           USER_MACHINE_ID: record.id,
           USER_SUBJECT: record.subject,
         },
@@ -169,11 +159,6 @@ async function machineRequest(
   if (request.method === "POST" && url.pathname === machinePath) {
     const body = await readJson(request);
     const subject = typeof body.subject === "string" ? body.subject.trim() : "";
-    const r2 = r2Config(env);
-
-    if (r2 instanceof Response) {
-      return r2;
-    }
 
     if (!subject) {
       return json({ error: "subject is required" }, 400);
@@ -181,11 +166,9 @@ async function machineRequest(
 
     const id = machineId(subject);
     const machine = getContainer(env.USER_MACHINE_CONTAINER, id);
-    const bucketPrefix = bucketPrefixForSubject(subject);
 
     return json(
       await machine.create({
-        bucketPrefix,
         id,
         subject,
       }),
@@ -243,40 +226,34 @@ function machineId(subject: string): string {
   return `user:${subject}`;
 }
 
-function bucketPrefixForSubject(subject: string): string {
-  return `users/${encodeURIComponent(subject)}`;
+function tokenproxyS3EnvVars(env: Env): Record<string, string> {
+  return optionalEnvVars(env, [
+    "AWS_ACCESS_KEY_ID",
+    "AWS_ALLOW_HTTP",
+    "AWS_DEFAULT_REGION",
+    "AWS_ENDPOINT",
+    "AWS_ENDPOINT_URL_S3",
+    "AWS_REQUEST_PAYER",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+  ]);
 }
 
-function r2Config(env: Env):
-  | {
-      accountId: string;
-      awsAccessKeyId: string;
-      awsSecretAccessKey: string;
-      bucketName: string;
-    }
-  | Response {
-  const missing = [
-    ["AWS_ACCESS_KEY_ID", env.AWS_ACCESS_KEY_ID],
-    ["AWS_SECRET_ACCESS_KEY", env.AWS_SECRET_ACCESS_KEY],
-    ["R2_ACCOUNT_ID", env.R2_ACCOUNT_ID],
-    ["R2_BUCKET_NAME", env.R2_BUCKET_NAME],
-  ]
-    .filter(([, value]) => !value)
-    .map(([name]) => name);
+function optionalEnvVars(
+  env: Env,
+  names: Array<keyof Env & string>,
+): Record<string, string> {
+  const envVars: Record<string, string> = {};
 
-  if (missing.length > 0) {
-    return json(
-      { error: `Missing user machine bucket config: ${missing.join(", ")}` },
-      500,
-    );
+  for (const name of names) {
+    const value = env[name];
+
+    if (typeof value === "string" && value.length > 0) {
+      envVars[name] = value;
+    }
   }
 
-  return {
-    accountId: env.R2_ACCOUNT_ID!,
-    awsAccessKeyId: env.AWS_ACCESS_KEY_ID!,
-    awsSecretAccessKey: env.AWS_SECRET_ACCESS_KEY!,
-    bucketName: env.R2_BUCKET_NAME!,
-  };
+  return envVars;
 }
 
 function json(body: unknown, status = 200): Response {

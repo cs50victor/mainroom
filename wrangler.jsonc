@@ -23,11 +23,11 @@
   "secrets": {
     "required": [
       "AWS_ACCESS_KEY_ID",
+      "AWS_DEFAULT_REGION",
+      "AWS_ENDPOINT_URL_S3",
       "AWS_SECRET_ACCESS_KEY",
       "CLERK_SECRET_KEY",
       "MACHINE_CONTROL_TOKEN",
-      "R2_ACCOUNT_ID",
-      "R2_BUCKET_NAME",
     ],
   },
   "containers": [

@@ -16,48 +16,23 @@ RUN bun run typecheck
 
 FROM base AS release
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends bash ca-certificates curl fuse3 tar \
+  && apt-get install -y --no-install-recommends ca-certificates curl tar \
   && rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
   arch="$(uname -m)"; \
   case "$arch" in \
-    x86_64) arch="amd64" ;; \
-    aarch64) arch="arm64" ;; \
+    x86_64) target="x86_64-unknown-linux-gnu" ;; \
+    aarch64) target="aarch64-unknown-linux-gnu" ;; \
+    *) echo "unsupported architecture: ${arch}" >&2; exit 1 ;; \
   esac; \
-  version="$(curl -fsSL https://api.github.com/repos/tigrisdata/tigrisfs/releases/latest | sed -n 's/.*"tag_name": "\(v[^"]*\)".*/\1/p' | head -n 1)"; \
-  curl -fsSL "https://github.com/tigrisdata/tigrisfs/releases/download/${version}/tigrisfs_${version#v}_linux_${arch}.tar.gz" -o /tmp/tigrisfs.tar.gz; \
-  tar -xzf /tmp/tigrisfs.tar.gz -C /usr/local/bin/; \
-  rm /tmp/tigrisfs.tar.gz; \
-  chmod +x /usr/local/bin/tigrisfs
-
-RUN printf '%s\n' \
-  '#!/usr/bin/env bash' \
-  'set -euo pipefail' \
-  'mkdir -p /mnt/r2 /mnt/user' \
-  'if [[ "${USER_MACHINE_BUCKET_MODE:-r2}" == "local" ]]; then' \
-  '  mkdir -p "/mnt/r2/${R2_BUCKET_PREFIX:-}"' \
-  '  ln -sfn "/mnt/r2/${R2_BUCKET_PREFIX:-}" /mnt/user/bucket' \
-  '  exec bun run src/index.ts' \
-  'fi' \
-  ': "${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required}"' \
-  ': "${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required}"' \
-  ': "${R2_ACCOUNT_ID:?R2_ACCOUNT_ID is required}"' \
-  ': "${R2_BUCKET_NAME:?R2_BUCKET_NAME is required}"' \
-  'r2_endpoint="${R2_ENDPOINT:-https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com}"' \
-  '/usr/local/bin/tigrisfs --endpoint "${r2_endpoint}" -f "${R2_BUCKET_NAME}" /mnt/r2 &' \
-  'mount_pid="$!"' \
-  'sleep 3' \
-  'kill -0 "${mount_pid}"' \
-  'if [[ -n "${R2_BUCKET_PREFIX:-}" ]]; then' \
-  '  mkdir -p "/mnt/r2/${R2_BUCKET_PREFIX}"' \
-  '  ln -sfn "/mnt/r2/${R2_BUCKET_PREFIX}" /mnt/user/bucket' \
-  'else' \
-  '  ln -sfn /mnt/r2 /mnt/user/bucket' \
-  'fi' \
-  'exec bun run src/index.ts' \
-  > /usr/local/bin/start-user-machine \
-  && chmod +x /usr/local/bin/start-user-machine
+  version="$(curl -fsSL https://api.github.com/repos/cs50victor/tokenproxy/releases/latest | sed -n 's/.*"tag_name": "\(v[^"]*\)".*/\1/p' | head -n 1)"; \
+  curl -fsSL "https://github.com/cs50victor/tokenproxy/releases/download/${version}/tokenproxy-${version}-${target}.tar.gz" -o /tmp/tokenproxy.tar.gz; \
+  tar -xzf /tmp/tokenproxy.tar.gz -C /tmp; \
+  mv "/tmp/tokenproxy-${version}-${target}/tokenproxy" /usr/local/bin/tokenproxy; \
+  rm -rf /tmp/tokenproxy.tar.gz "/tmp/tokenproxy-${version}-${target}"; \
+  chmod +x /usr/local/bin/tokenproxy; \
+  tokenproxy --version
 
 COPY --from=install /temp/prod/node_modules node_modules
 COPY --from=prerelease /usr/src/app/src src
@@ -66,4 +41,4 @@ COPY --from=prerelease /usr/src/app/package.json package.json
 ENV NODE_ENV=production
 ENV PORT=3000
 EXPOSE 3000/tcp
-ENTRYPOINT ["/usr/local/bin/start-user-machine"]
+ENTRYPOINT ["bun", "run", "src/index.ts"]
