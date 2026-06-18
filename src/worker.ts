@@ -1,9 +1,12 @@
 import { Container, getContainer, getRandom } from "@cloudflare/containers";
 
+import { getApiKeySecret, readConfig } from "./helpers";
+
 const instanceCount = 3;
 const machinePath = "/v0/machines";
 
 type Env = {
+  AUTH_MODE?: string;
   AWS_ACCESS_KEY_ID: string;
   AWS_ALLOW_HTTP?: string;
   AWS_DEFAULT_REGION: string;
@@ -12,6 +15,8 @@ type Env = {
   AWS_REQUEST_PAYER?: string;
   AWS_SECRET_ACCESS_KEY: string;
   AWS_SESSION_TOKEN?: string;
+  CLERK_API_URL?: string;
+  CLERK_API_VERSION?: string;
   CLERK_SECRET_KEY: string;
   CORS_ORIGIN?: string;
   MACHINE_CONTROL_TOKEN: string;
@@ -20,6 +25,7 @@ type Env = {
 };
 
 type UserMachineRecord = {
+  apiKeyId: string;
   id: string;
   subject: string;
 };
@@ -40,22 +46,20 @@ export class MainroomContainer extends Container<Env> {
 }
 
 export class UserMachineContainer extends Container<Env> {
-  defaultPort = 3000;
+  defaultPort = 8787;
   sleepAfter = "30m";
   storageKey = "user-machine";
 
   constructor(ctx: ConstructorParameters<typeof Container<Env>>[0], env: Env) {
     super(ctx, env);
     this.envVars = {
-      CLERK_SECRET_KEY: env.CLERK_SECRET_KEY,
-      CORS_ORIGIN: env.CORS_ORIGIN ?? "https://mainroom.sh",
       MACHINE_KIND: "user",
       NODE_ENV: "production",
-      PORT: "3000",
     };
   }
 
   async create(record: UserMachineRecord): Promise<{
+    apiKeyId: string;
     id: string;
     state: Awaited<ReturnType<UserMachineContainer["getState"]>>;
     subject: string;
@@ -64,6 +68,7 @@ export class UserMachineContainer extends Container<Env> {
     await this.startMachine(record);
 
     return {
+      apiKeyId: record.apiKeyId,
       id: record.id,
       state: await this.getState(),
       subject: record.subject,
@@ -71,6 +76,7 @@ export class UserMachineContainer extends Container<Env> {
   }
 
   async info(): Promise<{
+    apiKeyId?: string;
     id?: string;
     state: Awaited<ReturnType<UserMachineContainer["getState"]>>;
     subject?: string;
@@ -103,11 +109,17 @@ export class UserMachineContainer extends Container<Env> {
   }
 
   private async startMachine(record: UserMachineRecord): Promise<void> {
+    const { secret } = await getApiKeySecret(
+      workerAppConfig(this.env),
+      record.apiKeyId,
+    );
+
     await this.startAndWaitForPorts({
       startOptions: {
         envVars: {
           ...this.envVars,
           ...tokenproxyS3EnvVars(this.env),
+          TOKENPROXY_CLIENT_KEY: secret,
           USER_MACHINE_ID: record.id,
           USER_SUBJECT: record.subject,
         },
@@ -158,7 +170,13 @@ async function machineRequest(
 
   if (request.method === "POST" && url.pathname === machinePath) {
     const body = await readJson(request);
+    const apiKeyId =
+      typeof body.apiKeyId === "string" ? body.apiKeyId.trim() : "";
     const subject = typeof body.subject === "string" ? body.subject.trim() : "";
+
+    if (!apiKeyId) {
+      return json({ error: "apiKeyId is required" }, 400);
+    }
 
     if (!subject) {
       return json({ error: "subject is required" }, 400);
@@ -169,6 +187,7 @@ async function machineRequest(
 
     return json(
       await machine.create({
+        apiKeyId,
         id,
         subject,
       }),
@@ -224,6 +243,18 @@ async function readJson(request: Request): Promise<Record<string, unknown>> {
 
 function machineId(subject: string): string {
   return `user:${subject}`;
+}
+
+function workerAppConfig(env: Env) {
+  return readConfig({
+    AUTH_MODE: env.AUTH_MODE,
+    CLERK_API_URL: env.CLERK_API_URL,
+    CLERK_API_VERSION: env.CLERK_API_VERSION,
+    CLERK_SECRET_KEY: env.CLERK_SECRET_KEY,
+    CORS_ORIGIN: env.CORS_ORIGIN,
+    NODE_ENV: "production",
+    PORT: "3000",
+  });
 }
 
 function tokenproxyS3EnvVars(env: Env): Record<string, string> {
