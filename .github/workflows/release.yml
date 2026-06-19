@@ -1,0 +1,207 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: [Deploy]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Check release version
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.release.outputs.sha }}
+      should_release: ${{ steps.release.outputs.should_release }}
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          VERSION="$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')"
+          TAG="v${VERSION}"
+
+          {
+            echo "sha=${SHA}"
+            echo "version=${VERSION}"
+            echo "tag=${TAG}"
+          } >> "$GITHUB_OUTPUT"
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; skipping."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Release $TAG does not exist; publishing."
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  test:
+    name: Test before release
+    needs: prepare
+    if: ${{ needs.prepare.outputs.should_release == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bun run typecheck
+
+  build-linux:
+    name: Build Linux CLI archives
+    needs:
+      - prepare
+      - test
+    if: ${{ needs.prepare.outputs.should_release == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun run build:cli:linux
+      - run: bun run build:cli:linux-arm
+      - name: Package CLI archives
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          mkdir -p packages
+
+          package() {
+            local source="$1"
+            local target="$2"
+            local workdir
+            workdir="$(mktemp -d)"
+            cp "$source" "$workdir/mainroom"
+            chmod +x "$workdir/mainroom"
+            tar -czf "packages/mainroom_${VERSION}_${target}.tar.gz" -C "$workdir" mainroom
+          }
+
+          package dist/mainroom-linux-x64 linux_amd64
+          package dist/mainroom-linux-arm64 linux_arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-linux-archives
+          path: packages/mainroom_*.tar.gz
+
+  build-macos:
+    name: Build macOS CLI archives
+    needs:
+      - prepare
+      - test
+    if: ${{ needs.prepare.outputs.should_release == 'true' }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun run build:cli:macos
+      - run: bun run build:cli:macos-arm
+      - name: Sign macOS binaries
+        run: |
+          codesign --force --sign - dist/mainroom-darwin-x64
+          codesign --force --sign - dist/mainroom-darwin-arm64
+      - name: Smoke test native macOS binary
+        run: |
+          if [ "$(uname -m)" = "arm64" ]; then
+            dist/mainroom-darwin-arm64 --version
+          else
+            dist/mainroom-darwin-x64 --version
+          fi
+      - name: Package CLI archives
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          mkdir -p packages
+
+          package() {
+            local source="$1"
+            local target="$2"
+            local workdir
+            workdir="$(mktemp -d)"
+            cp "$source" "$workdir/mainroom"
+            chmod +x "$workdir/mainroom"
+            tar -czf "packages/mainroom_${VERSION}_${target}.tar.gz" -C "$workdir" mainroom
+          }
+
+          package dist/mainroom-darwin-x64 darwin_amd64
+          package dist/mainroom-darwin-arm64 darwin_arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-macos-archives
+          path: packages/mainroom_*.tar.gz
+
+  release:
+    name: Create GitHub release
+    needs:
+      - prepare
+      - build-linux
+      - build-macos
+    if: ${{ needs.prepare.outputs.should_release == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cli-*-archives
+          path: packages/
+          merge-multiple: true
+      - name: Generate checksums
+        run: |
+          cd packages
+          sha256sum ./* > checksums.txt
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          gh release create "$TAG" \
+            packages/mainroom_*.tar.gz \
+            packages/checksums.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SHA" \
+            --title "$TAG" \
+            --generate-notes
+
+  homebrew:
+    name: Update Homebrew tap
+    needs:
+      - prepare
+      - release
+    if: ${{ needs.prepare.outputs.should_release == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger tap update
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          gh workflow run update-formula.yml \
+            --repo cs50victor/homebrew-tap \
+            -f formula=mainroom \
+            -f tag="${{ needs.prepare.outputs.tag }}" \
+            -f repository=cs50victor/mainroom \
+            -f description="Mainroom command-line tool" \
+            -f artifact_template="mainroom_{version}_{target}.tar.gz"
