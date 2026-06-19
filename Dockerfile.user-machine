@@ -1,0 +1,23 @@
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends bash ca-certificates curl tar \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+  arch="$(uname -m)"; \
+  case "$arch" in \
+    x86_64) target="x86_64-unknown-linux-gnu" ;; \
+    aarch64) target="aarch64-unknown-linux-gnu" ;; \
+    *) echo "unsupported architecture: ${arch}" >&2; exit 1 ;; \
+  esac; \
+  version="$(curl -fsSL https://api.github.com/repos/cs50victor/tokenproxy/releases/latest | sed -n 's/.*"tag_name": "\(v[^"]*\)".*/\1/p' | head -n 1)"; \
+  curl -fsSL "https://github.com/cs50victor/tokenproxy/releases/download/${version}/tokenproxy-${version}-${target}.tar.gz" -o /tmp/tokenproxy.tar.gz; \
+  tar -xzf /tmp/tokenproxy.tar.gz -C /tmp; \
+  mv "/tmp/tokenproxy-${version}-${target}/tokenproxy" /usr/local/bin/tokenproxy; \
+  rm -rf /tmp/tokenproxy.tar.gz "/tmp/tokenproxy-${version}-${target}"; \
+  chmod +x /usr/local/bin/tokenproxy; \
+  tokenproxy --version
+
+EXPOSE 8787/tcp
+CMD ["/bin/bash"]

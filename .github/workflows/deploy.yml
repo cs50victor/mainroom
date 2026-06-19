@@ -41,10 +41,22 @@ jobs:
           command: deploy
           packageManager: bun
           secrets: |
+            AWS_ACCESS_KEY_ID
+            AWS_SECRET_ACCESS_KEY
             CLERK_SECRET_KEY
+            MACHINE_CONTROL_TOKEN
+            S3_BUCKET
+            S3_ENDPOINT
+            S3_REGION
           wranglerVersion: 4.100.0
         env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+          MACHINE_CONTROL_TOKEN: ${{ secrets.MACHINE_CONTROL_TOKEN }}
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
+          S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
+          S3_REGION: ${{ secrets.S3_REGION }}
       - name: Smoke test deployment
         env:
           SERVICE_URL: https://mainroom.sh
