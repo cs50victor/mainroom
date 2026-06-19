@@ -3,7 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "mainroom": "cli/mainroom.ts"
+  },
   "scripts": {
+    "build:cli:linux": "bun build --compile --minify --target=bun-linux-x64 cli/mainroom.ts --outfile dist/mainroom-linux-x64",
+    "build:cli:linux-arm": "bun build --compile --minify --target=bun-linux-arm64 cli/mainroom.ts --outfile dist/mainroom-linux-arm64",
+    "build:cli:macos": "bun build --compile --minify --target=bun-darwin-x64 cli/mainroom.ts --outfile dist/mainroom-darwin-x64",
+    "build:cli:macos-arm": "bun build --compile --minify --target=bun-darwin-arm64 cli/mainroom.ts --outfile dist/mainroom-darwin-arm64",
+    "build:cli:all": "bun run build:cli:linux && bun run build:cli:linux-arm && bun run build:cli:macos && bun run build:cli:macos-arm",
+    "cli": "bun run cli/mainroom.ts",
     "deploy": "wrangler deploy",
     "dev": "bun run --watch src/index.ts",
     "lint": "prettier --check --ignore-unknown .",
