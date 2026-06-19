@@ -9,11 +9,13 @@ type Env = {
   AUTH_MODE?: string;
   AWS_ACCESS_KEY_ID: string;
   AWS_ALLOW_HTTP?: string;
-  AWS_DEFAULT_REGION: string;
+  AWS_DEFAULT_REGION?: string;
   AWS_ENDPOINT?: string;
-  AWS_ENDPOINT_URL_S3: string;
+  AWS_ENDPOINT_URL_S3?: string;
+  AWS_REGION?: string;
+  AWS_BUCKET?: string;
   AWS_REQUEST_PAYER?: string;
-  AWS_SECRET_ACCESS_KEY: string;
+  AWS_SECRET_ACCESS_KEY?: string;
   AWS_SESSION_TOKEN?: string;
   CLERK_API_URL?: string;
   CLERK_API_VERSION?: string;
@@ -21,6 +23,14 @@ type Env = {
   CORS_ORIGIN?: string;
   MACHINE_CONTROL_TOKEN: string;
   MAINROOM_CONTAINER: DurableObjectNamespace<MainroomContainer>;
+  R2_ACCOUNT_ID?: string;
+  R2_BUCKET_NAME?: string;
+  S3_ACCESS_KEY_ID?: string;
+  S3_BUCKET?: string;
+  S3_ENDPOINT?: string;
+  S3_REGION?: string;
+  S3_SECRET_ACCESS_KEY?: string;
+  S3_SESSION_TOKEN?: string;
   USER_MACHINE_CONTAINER: DurableObjectNamespace<UserMachineContainer>;
 };
 
@@ -37,6 +47,12 @@ export class MainroomContainer extends Container<Env> {
   constructor(ctx: ConstructorParameters<typeof Container<Env>>[0], env: Env) {
     super(ctx, env);
     this.envVars = {
+      ...s3EnvVars(env),
+      ...optionalEnvVars(env, [
+        "AUTH_MODE",
+        "CLERK_API_URL",
+        "CLERK_API_VERSION",
+      ]),
       CLERK_SECRET_KEY: env.CLERK_SECRET_KEY,
       CORS_ORIGIN: env.CORS_ORIGIN ?? "https://mainroom.sh",
       NODE_ENV: "production",
@@ -118,7 +134,7 @@ export class UserMachineContainer extends Container<Env> {
       startOptions: {
         envVars: {
           ...this.envVars,
-          ...tokenproxyS3EnvVars(this.env),
+          ...s3EnvVars(this.env),
           TOKENPROXY_CLIENT_KEY: secret,
           USER_MACHINE_ID: record.id,
           USER_SUBJECT: record.subject,
@@ -257,17 +273,80 @@ function workerAppConfig(env: Env) {
   });
 }
 
-function tokenproxyS3EnvVars(env: Env): Record<string, string> {
-  return optionalEnvVars(env, [
+function s3EnvVars(env: Env): Record<string, string> {
+  const envVars = optionalEnvVars(env, [
     "AWS_ACCESS_KEY_ID",
     "AWS_ALLOW_HTTP",
+    "AWS_BUCKET",
     "AWS_DEFAULT_REGION",
     "AWS_ENDPOINT",
     "AWS_ENDPOINT_URL_S3",
+    "AWS_REGION",
     "AWS_REQUEST_PAYER",
     "AWS_SECRET_ACCESS_KEY",
     "AWS_SESSION_TOKEN",
+    "R2_ACCOUNT_ID",
+    "R2_BUCKET_NAME",
+    "S3_ACCESS_KEY_ID",
+    "S3_BUCKET",
+    "S3_ENDPOINT",
+    "S3_REGION",
+    "S3_SECRET_ACCESS_KEY",
+    "S3_SESSION_TOKEN",
   ]);
+
+  if (envVars.S3_BUCKET && !envVars.AWS_BUCKET) {
+    envVars.AWS_BUCKET = envVars.S3_BUCKET;
+  }
+
+  if (envVars.AWS_BUCKET && !envVars.S3_BUCKET) {
+    envVars.S3_BUCKET = envVars.AWS_BUCKET;
+  }
+
+  if (envVars.S3_ENDPOINT && !envVars.AWS_ENDPOINT_URL_S3) {
+    envVars.AWS_ENDPOINT_URL_S3 = envVars.S3_ENDPOINT;
+  }
+
+  if (envVars.AWS_ENDPOINT_URL_S3 && !envVars.S3_ENDPOINT) {
+    envVars.S3_ENDPOINT = envVars.AWS_ENDPOINT_URL_S3;
+  }
+
+  if (envVars.S3_REGION && !envVars.AWS_REGION) {
+    envVars.AWS_REGION = envVars.S3_REGION;
+  }
+
+  if (envVars.AWS_REGION && !envVars.S3_REGION) {
+    envVars.S3_REGION = envVars.AWS_REGION;
+  }
+
+  if (envVars.AWS_DEFAULT_REGION && !envVars.S3_REGION) {
+    envVars.S3_REGION = envVars.AWS_DEFAULT_REGION;
+    envVars.AWS_REGION = envVars.AWS_DEFAULT_REGION;
+  }
+
+  if (!envVars.S3_BUCKET && env.R2_BUCKET_NAME) {
+    envVars.S3_BUCKET = env.R2_BUCKET_NAME;
+    envVars.AWS_BUCKET = env.R2_BUCKET_NAME;
+  }
+
+  if (!envVars.S3_ENDPOINT && !envVars.AWS_ENDPOINT_URL_S3) {
+    const endpoint = r2Endpoint(env.R2_ACCOUNT_ID);
+    if (endpoint) {
+      envVars.S3_ENDPOINT = endpoint;
+      envVars.AWS_ENDPOINT_URL_S3 = endpoint;
+    }
+  }
+
+  if (!envVars.S3_REGION && !envVars.AWS_REGION) {
+    envVars.S3_REGION = "auto";
+    envVars.AWS_REGION = "auto";
+  }
+
+  if (!envVars.AWS_DEFAULT_REGION) {
+    envVars.AWS_DEFAULT_REGION = envVars.AWS_REGION;
+  }
+
+  return envVars;
 }
 
 function optionalEnvVars(
@@ -289,6 +368,12 @@ function optionalEnvVars(
 
 function json(body: unknown, status = 200): Response {
   return Response.json(body, { status });
+}
+
+function r2Endpoint(accountId: string | undefined): string | undefined {
+  return accountId
+    ? `https://${accountId}.r2.cloudflarestorage.com`
+    : undefined;
 }
 
 export default {

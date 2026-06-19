@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { bearerToken, isApiKeyValid, type AppConfig } from "../helpers";
 import { createApiKeysRoute } from "./api-keys";
+import { createUploadsRoute } from "./uploads";
 
 export function createV0Route(config: AppConfig): Hono {
   const v0 = new Hono();
@@ -48,6 +49,7 @@ export function createV0Route(config: AppConfig): Hono {
   );
 
   v0.route("/api-keys", createApiKeysRoute(config));
+  v0.route("/uploads", createUploadsRoute());
 
   return v0;
 }
