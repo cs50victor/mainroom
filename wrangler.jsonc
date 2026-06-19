@@ -42,7 +42,7 @@
       "class_name": "UserMachineContainer",
       "image": "./Dockerfile.user-machine",
       "instance_type": "lite",
-      "max_instances": 14997,
+      "max_instances": 14957,
     },
   ],
   "durable_objects": {
