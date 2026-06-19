@@ -4,6 +4,13 @@ import { getApiKeySecret, readConfig } from "./helpers";
 
 const instanceCount = 3;
 const machinePath = "/v0/machines";
+const tokenproxyEntrypoint = [
+  "tokenproxy",
+  "-c",
+  "server.bind='0.0.0.0:8787'",
+  "-c",
+  "server.allow_non_loopback=true",
+];
 
 type Env = {
   AUTH_MODE?: string;
@@ -139,6 +146,7 @@ export class UserMachineContainer extends Container<Env> {
           USER_MACHINE_ID: record.id,
           USER_SUBJECT: record.subject,
         },
+        entrypoint: tokenproxyEntrypoint,
         labels: {
           machine: record.id,
           subject: record.subject,

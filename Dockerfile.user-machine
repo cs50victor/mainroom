@@ -1,7 +1,7 @@
 FROM debian:bookworm-slim
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl tar \
+  && apt-get install -y --no-install-recommends bash ca-certificates curl tar \
   && rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
@@ -20,5 +20,4 @@ RUN set -eux; \
   tokenproxy --version
 
 EXPOSE 8787/tcp
-ENTRYPOINT ["tokenproxy"]
-CMD ["-c", "server.bind='0.0.0.0:8787'", "-c", "server.allow_non_loopback=true"]
+CMD ["/bin/bash"]
