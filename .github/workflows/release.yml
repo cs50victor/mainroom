@@ -9,9 +9,14 @@ on:
 permissions:
   contents: read
 
+env:
+  RELEASE_R2_BUCKET: mainroom-releases
+  RELEASE_R2_ENDPOINT: https://5eefc1858fd1b778fe50c87fa4c5770c.r2.cloudflarestorage.com
+  RELEASE_PUBLIC_BASE_URL: https://pub-0f2e7d3d4356465db47f0ff4626ec2a8.r2.dev
+
 jobs:
   prepare:
-    name: Check release version
+    name: Check release artifacts
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     outputs:
@@ -37,11 +42,12 @@ jobs:
             echo "tag=${TAG}"
           } >> "$GITHUB_OUTPUT"
 
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; skipping."
+          PRIMARY_ARTIFACT_URL="${RELEASE_PUBLIC_BASE_URL%/}/mainroom/${TAG}/mainroom_${VERSION}_darwin_arm64.tar.gz"
+          if curl --fail --silent --head "$PRIMARY_ARTIFACT_URL" >/dev/null; then
+            echo "Release artifact already exists at $PRIMARY_ARTIFACT_URL; skipping."
             echo "should_release=false" >> "$GITHUB_OUTPUT"
           else
-            echo "Release $TAG does not exist; publishing."
+            echo "Release artifact is missing at $PRIMARY_ARTIFACT_URL; publishing."
             echo "should_release=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -153,7 +159,7 @@ jobs:
           path: packages/mainroom_*.tar.gz
 
   release:
-    name: Create GitHub release
+    name: Publish release archives
     needs:
       - prepare
       - build-linux
@@ -172,12 +178,39 @@ jobs:
         run: |
           cd packages
           sha256sum ./* > checksums.txt
-      - name: Create release
+      - name: Ensure AWS CLI
+        run: |
+          if command -v aws >/dev/null 2>&1; then
+            aws --version
+          else
+            python3 -m pip install --user awscli
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          fi
+      - name: Upload release archives to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          : "${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required}"
+          : "${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required}"
+
+          aws s3 cp packages/ "s3://${RELEASE_R2_BUCKET}/mainroom/${TAG}/" \
+            --recursive \
+            --endpoint-url "$RELEASE_R2_ENDPOINT" \
+            --cache-control "public, max-age=31536000, immutable"
+      - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ needs.prepare.outputs.sha }}
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "GitHub release $TAG already exists; leaving it unchanged."
+            exit 0
+          fi
+
           gh release create "$TAG" \
             packages/mainroom_*.tar.gz \
             packages/checksums.txt \
@@ -204,4 +237,4 @@ jobs:
             -f tag="${{ needs.prepare.outputs.tag }}" \
             -f repository=cs50victor/mainroom \
             -f description="Mainroom command-line tool" \
-            -f artifact_template="mainroom_{version}_{target}.tar.gz"
+            -f artifact_template="${RELEASE_PUBLIC_BASE_URL}/mainroom/{tag}/mainroom_{version}_{target}.tar.gz"
