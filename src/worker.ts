@@ -12,6 +12,42 @@ import { apiKeySchema } from "./schemas/api-keys";
 const rootHost = "mainroom.sh";
 const instanceCount = 3;
 const machinePath = "/v0/machines";
+
+/*
+ * Tokenproxy rollout invariant:
+ *
+ * Runtime/image/env changes must create a new user-machine generation, not
+ * destroy the currently running generation. Tokenproxy traffic can include
+ * long-lived /v1/chat/completions streams, /v1/responses streams, and
+ * WebSockets; destroying the running container can visibly abort those
+ * connections.
+ *
+ * Keep the runtime version in the explicit Container Durable Object id so new
+ * requests route to the new generation while old requests drain on the old
+ * generation until they finish or sleepAfter idles it out. If we add
+ * load-balanced slots, keep the generation boundary and append the slot after
+ * the version: user:<subject>:<version>:<slot>. Select only active-generation
+ * slots for new requests; let older generations drain.
+ *
+ * References:
+ * - Cloudflare Containers are Durable Object wrappers with lifecycle/state:
+ *   https://developers.cloudflare.com/containers/container-class/
+ * - Cloudflare Containers support explicit IDs and getRandom routing:
+ *   https://developers.cloudflare.com/containers/platform-details/scaling-and-routing/
+ * - Cloudflare Containers forward WebSockets through fetch:
+ *   https://developers.cloudflare.com/containers/examples/websocket/
+ * - Durable Object WebSockets are long-lived TCP connections:
+ *   https://developers.cloudflare.com/durable-objects/best-practices/websockets/
+ * - Durable Object lifecycle keeps active WebSockets alive:
+ *   https://developers.cloudflare.com/durable-objects/concepts/durable-object-lifecycle/
+ * - Production analogs: Kubernetes rolling updates, AWS ELB deregistration
+ *   draining, Envoy listener draining, and NGINX graceful reload:
+ *   https://kubernetes.io/docs/concepts/workloads/controllers/deployment/
+ *   https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_DeregisterTargets.html
+ *   https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/operations/draining
+ *   https://nginx.org/en/docs/control.html
+ */
+const tokenproxyRuntimeVersion = "v0.1.12";
 const tokenproxyEntrypoint = [
   "tokenproxy",
   "-c",
@@ -159,6 +195,7 @@ export class UserMachineContainer extends Container<Env> {
           ...this.envVars,
           ...s3EnvVars(this.env),
           TOKENPROXY_CLIENT_KEY: secret,
+          TOKENPROXY_CONFIG_UPDATE_ENDPOINT: `https://${rootHost}/v0/tokenproxy/auth-json/refresh`,
           USER_MACHINE_ID: record.id,
           USER_SUBJECT: record.subject,
         },
@@ -393,7 +430,7 @@ async function readJson(request: Request): Promise<Record<string, unknown>> {
 }
 
 function machineId(subject: string): string {
-  return `user:${subject}`;
+  return `user:${subject}:${tokenproxyRuntimeVersion}`;
 }
 
 function workerAppConfig(env: Env) {
