@@ -1,5 +1,7 @@
 #!/usr/bin/env bun
 
+import { Command } from "commander";
+
 const version = "0.1.0";
 const defaultApiUrl = "https://mainroom.sh";
 
@@ -35,124 +37,95 @@ type RequestOptions = {
   token?: string;
 };
 
-const usage = `Mainroom CLI ${version}
+type AuthCommandOptions = {
+  apiUrl: string;
+  withToken?: boolean;
+};
 
-Use Mainroom from your terminal.
+const program = new Command();
+const authCommand = new Command("auth");
 
-Usage:
-  mainroom <command> <subcommand> [flags]
-  mainroom --help
-  mainroom --version
-
-Commands:
-  auth         Create accounts, log in, and manage local credentials
-  ping         Call the authenticated ping endpoint
-  hello        Print hello
-
-Options:
-  -h, --help           Show help
-  -v, --version        Show version
-
+program
+  .name("mainroom")
+  .description("Use Mainroom from your terminal.")
+  .version(version, "-v, --version", "Show version")
+  .showHelpAfterError()
+  .addHelpText(
+    "after",
+    `
 Examples:
   $ mainroom auth signup
   $ mainroom auth login
   $ mainroom auth status
-  $ mainroom ping`;
+  $ mainroom ping`,
+  );
 
-async function main(args: string[]): Promise<number> {
-  const [command, subcommand] = args;
-
-  if (!command || command === "--help" || command === "-h") {
-    console.log(usage);
-    return 0;
-  }
-
-  if (command === "--version" || command === "-v") {
-    console.log(version);
-    return 0;
-  }
-
-  if (command === "hello") {
-    console.log("hello");
-    return 0;
-  }
-
-  if (command === "auth") {
-    return auth(args.slice(1));
-  }
-
-  if (command === "ping") {
-    return ping();
-  }
-
-  console.error(`Unknown command: ${args.join(" ")}`);
-  console.error("Run `mainroom --help` for usage.");
-  return 1;
-}
-
-async function auth(args: string[]): Promise<number> {
-  const [command] = args;
-
-  if (!command || command === "--help" || command === "-h") {
-    console.log(authUsage);
-    return 0;
-  }
-
-  if (command === "login" || command === "signup") {
-    return login(args.slice(1), command);
-  }
-
-  if (command === "logout") {
-    return logout();
-  }
-
-  if (command === "status") {
-    return authStatus();
-  }
-
-  console.error(`Unknown command: auth ${args.join(" ")}`);
-  console.error("Run `mainroom auth --help` for usage.");
-  return 1;
-}
-
-const authUsage = `Authenticate Mainroom and manage local credentials.
-
+authCommand
+  .description("Create accounts, log in, and manage local credentials.")
+  .showHelpAfterError()
+  .addHelpText(
+    "after",
+    `
 First-time users should run signup. The browser flow can create a Clerk account,
 then Mainroom stores a local API key for future CLI commands.
-
-Usage:
-  mainroom auth signup [--api-url <url>]
-  mainroom auth login [--api-url <url>]
-  mainroom auth login --with-token [--api-url <url>]
-  mainroom auth logout
-  mainroom auth status
-
-Available Commands:
-  signup   Create a Clerk account or sign in, then save a local API key
-  login    Log in to an existing account, with account creation available
-  logout   Remove saved authentication
-  status   Display saved authentication state
-
-Flags:
-      --api-url <url>  Mainroom API origin (default: ${defaultApiUrl})
-      --with-token     Read an existing Mainroom API key from stdin
-  -h, --help           Show help
 
 Examples:
   $ mainroom auth signup
   $ mainroom auth login
   $ mainroom auth login --with-token < mainroom-api-key.txt
-  $ mainroom auth logout`;
-
-async function login(
-  args: string[],
-  command: "login" | "signup",
-): Promise<number> {
-  const apiUrl = normalizeApiUrl(
-    parseOption(args, "--api-url") ?? defaultApiUrl,
+  $ mainroom auth logout`,
   );
 
-  if (args.includes("--with-token")) {
+authCommand
+  .command("signup")
+  .description("Create a Clerk account or sign in, then save a local API key.")
+  .option("--api-url <url>", "Mainroom API origin", defaultApiUrl)
+  .action((options: AuthCommandOptions) =>
+    runCommand(() => login(options, "signup")),
+  );
+
+authCommand
+  .command("login")
+  .description(
+    "Log in to an existing account, with account creation available.",
+  )
+  .option("--api-url <url>", "Mainroom API origin", defaultApiUrl)
+  .option("--with-token", "Read an existing Mainroom API key from stdin")
+  .action((options: AuthCommandOptions) =>
+    runCommand(() => login(options, "login")),
+  );
+
+authCommand
+  .command("logout")
+  .description("Remove saved authentication.")
+  .action(() => runCommand(logout));
+
+authCommand
+  .command("status")
+  .description("Display saved authentication state.")
+  .action(() => runCommand(authStatus));
+
+program.addCommand(authCommand);
+
+program
+  .command("ping")
+  .description("Call the authenticated ping endpoint.")
+  .action(() => runCommand(ping));
+
+program
+  .command("hello")
+  .description("Print hello.")
+  .action(() => {
+    console.log("hello");
+  });
+
+async function login(
+  options: AuthCommandOptions,
+  command: "login" | "signup",
+): Promise<number> {
+  const apiUrl = normalizeApiUrl(options.apiUrl);
+
+  if (options.withToken) {
     return loginWithToken(apiUrl);
   }
 
@@ -295,18 +268,6 @@ async function ping(): Promise<number> {
 
   console.log(JSON.stringify(result.data));
   return 0;
-}
-
-function parseOption(args: string[], name: string): string | undefined {
-  const index = args.indexOf(name);
-  if (index === -1) return undefined;
-
-  const value = args[index + 1];
-  if (!value || value.startsWith("-")) {
-    throw new Error(`${name} requires a value`);
-  }
-
-  return value;
 }
 
 function normalizeApiUrl(apiUrl: string): string {
@@ -597,11 +558,18 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+async function runCommand(command: () => Promise<number>): Promise<void> {
+  try {
+    process.exitCode = await command();
+  } catch (error) {
+    console.error(errorMessage(error));
+    process.exitCode = 1;
+  }
+}
+
 try {
-  process.exitCode = await main(Bun.argv.slice(2));
+  await program.parseAsync(Bun.argv);
 } catch (error) {
   console.error(errorMessage(error));
   process.exitCode = 1;
 }
-
-export {};

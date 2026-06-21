@@ -22,6 +22,7 @@
   "dependencies": {
     "@clerk/backend": "3.7.1",
     "@scalar/hono-api-reference": "^0.11.3",
+    "commander": "^15.0.0",
     "hono": "^4.12.25",
     "hono-zod-openapi": "^1.1.1",
     "zod": "^4.4.3"
