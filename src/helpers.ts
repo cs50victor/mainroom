@@ -120,6 +120,24 @@ export function bearerToken(request: Request): string | undefined {
   return authorization.slice(prefix.length) || undefined;
 }
 
+export async function apiKeySubject(
+  config: AppConfig,
+  request: Request,
+): Promise<string | undefined> {
+  const token = bearerToken(request);
+  if (!token) return undefined;
+
+  if (config.authMode === "mock") {
+    return "user_mock";
+  }
+
+  try {
+    return (await verifyApiKey(config, { secret: token })).subject;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function isApiKeyValid(
   config: AppConfig,
   secret: string,

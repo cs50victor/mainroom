@@ -5,12 +5,18 @@ import { openApi } from "hono-zod-openapi";
 import { z } from "zod";
 import type { HonoRequest } from "hono";
 
-import { bearerToken, verifyApiKey, type AppConfig } from "../helpers";
+import { apiKeySubject, type AppConfig } from "../helpers";
 import { errorSchema } from "../schemas/api-keys";
-
-const maxJsonFileBytes = 1024 * 1024;
-const maxMultipartOverheadBytes = 16 * 1024;
-const uploadNameHeader = "x-mainroom-upload-name";
+import {
+  isJsonUploadName,
+  jsonUploadBucket,
+  jsonUploadContentType,
+  jsonUploadKey,
+  jsonUploadMaxBytes,
+  jsonUploadMultipartOverheadBytes,
+  jsonUploadNameError,
+  jsonUploadNameHeader,
+} from "./json-uploads";
 
 const uploadSchema = z.object({
   bucket: z.string(),
@@ -24,9 +30,8 @@ export function createUploadsRoute(config: AppConfig): Hono {
   uploads.post(
     "/json",
     bodyLimit({
-      maxSize: maxJsonFileBytes + maxMultipartOverheadBytes,
-      onError: (c) =>
-        c.var.res(413, { error: "File must be 1 MiB or smaller" }),
+      maxSize: jsonUploadMaxBytes + jsonUploadMultipartOverheadBytes,
+      onError: (c) => c.json({ error: "File must be 1 MiB or smaller" }, 413),
     }),
     openApi({
       tags: ["Uploads"],
@@ -42,17 +47,8 @@ export function createUploadsRoute(config: AppConfig): Hono {
       },
     }),
     async (c) => {
-      const token = bearerToken(c.req.raw);
-      if (!token) return c.var.res(401, { error: "Unauthorized" });
-
-      let userId = "user_mock";
-      if (config.authMode !== "mock") {
-        try {
-          userId = (await verifyApiKey(config, { secret: token })).subject;
-        } catch {
-          return c.var.res(401, { error: "Unauthorized" });
-        }
-      }
+      const userId = await apiKeySubject(config, c.req.raw);
+      if (!userId) return c.var.res(401, { error: "Unauthorized" });
 
       const upload = await readJsonUpload(c.req);
       if ("error" in upload) {
@@ -60,24 +56,20 @@ export function createUploadsRoute(config: AppConfig): Hono {
       }
 
       const uploadName =
-        c.req.header(uploadNameHeader) ?? `${crypto.randomUUID()}.json`;
-      if (!/^[A-Za-z0-9._@+-]{1,160}\.json$/.test(uploadName)) {
-        return c.var.res(400, {
-          error:
-            "X-Mainroom-Upload-Name must be a JSON filename without path separators",
-        });
+        c.req.header(jsonUploadNameHeader) ?? `${crypto.randomUUID()}.json`;
+      if (!isJsonUploadName(uploadName)) {
+        return c.var.res(400, { error: jsonUploadNameError });
       }
 
-      const bucket = Bun.env.S3_BUCKET ?? Bun.env.AWS_BUCKET;
+      const bucket = jsonUploadBucket();
       if (!bucket) {
         return c.var.res(502, { error: "S3 bucket is not configured" });
       }
 
-      const key = `uploads/json/${encodeURIComponent(userId)}/${uploadName}`;
-
+      const key = jsonUploadKey(userId, uploadName);
       try {
         await new S3Client().write(key, upload.text, {
-          type: "application/json; charset=utf-8",
+          type: jsonUploadContentType,
         });
       } catch {
         return c.var.res(502, { error: "S3 upload failed" });
@@ -105,14 +97,14 @@ async function readJsonUpload(
     const body = await request.parseBody();
     const file = body.file;
 
-    if (!isUploadedFile(file)) {
+    if (!(file instanceof File)) {
       return {
         error: "Multipart upload must include a file field",
         status: 400,
       };
     }
 
-    if (file.size > maxJsonFileBytes) {
+    if (file.size > jsonUploadMaxBytes) {
       return { error: "File must be 1 MiB or smaller", status: 413 };
     }
 
@@ -132,7 +124,7 @@ async function readJsonUpload(
 function readJsonBytes(
   bytes: ArrayBuffer,
 ): { size: number; text: string } | { error: string; status: 400 | 413 } {
-  if (bytes.byteLength > maxJsonFileBytes) {
+  if (bytes.byteLength > jsonUploadMaxBytes) {
     return { error: "File must be 1 MiB or smaller", status: 413 };
   }
 
@@ -151,17 +143,6 @@ function readJsonBytes(
   }
 
   return { size: bytes.byteLength, text };
-}
-
-function isUploadedFile(value: unknown): value is File {
-  const file = value as { arrayBuffer?: unknown; size?: unknown };
-
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof file.size === "number" &&
-    typeof file.arrayBuffer === "function"
-  );
 }
 
 function isJsonContentType(contentType: string): boolean {
