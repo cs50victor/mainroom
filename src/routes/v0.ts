@@ -4,12 +4,20 @@ import { z } from "zod";
 
 import { bearerToken, isApiKeyValid, type AppConfig } from "../helpers";
 import { createApiKeysRoute } from "./api-keys";
+import { createCliAuthRoute } from "./cli-auth";
 import { createUploadsRoute } from "./uploads";
 
 export function createV0Route(config: AppConfig): Hono {
   const v0 = new Hono();
 
+  v0.route("/auth/cli", createCliAuthRoute(config));
+
   v0.use("*", async (c, next) => {
+    if (new URL(c.req.url).pathname.startsWith("/v0/auth/cli/")) {
+      await next();
+      return;
+    }
+
     const token = bearerToken(c.req.raw);
 
     if (!token) {
