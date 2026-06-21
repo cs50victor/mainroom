@@ -5,6 +5,7 @@ import {
 } from "@clerk/backend";
 import { isClerkAPIResponseError } from "@clerk/backend/errors";
 
+import { mainroomUserAgent } from "./version";
 import type {
   CreateApiKeyParams,
   ListApiKeysParams,
@@ -256,7 +257,7 @@ export async function authenticateOAuthToken(
     secretKey: config.clerkSecretKey,
     apiUrl: config.clerkApiUrl,
     apiVersion: config.clerkApiVersion,
-    userAgent: "mainroom/0.1.0",
+    userAgent: mainroomUserAgent,
     telemetry: { disabled: true },
   });
   const state = await client.authenticateRequest(request, {
@@ -368,7 +369,7 @@ async function clerkApi<T>(
     secretKey: config.clerkSecretKey,
     apiUrl: config.clerkApiUrl,
     apiVersion: config.clerkApiVersion,
-    userAgent: "mainroom/0.1.0",
+    userAgent: mainroomUserAgent,
     telemetry: { disabled: true },
   });
 
