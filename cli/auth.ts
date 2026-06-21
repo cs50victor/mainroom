@@ -1,4 +1,3 @@
-import { input } from "@inquirer/prompts";
 import {
   fetchCliOAuthConfig,
   mintCliApiKey,
@@ -106,6 +105,11 @@ async function loginWithOAuth(
   apiUrl: string,
   command: AuthMode,
 ): Promise<number> {
+  if (await isLoggedIn(apiUrl)) {
+    console.log(`Already logged in to ${apiUrl}`);
+    return 0;
+  }
+
   const config = await fetchCliOAuthConfig(apiUrl);
   if (!config.ok) {
     console.error(config.error);
@@ -115,7 +119,6 @@ async function loginWithOAuth(
     return 1;
   }
 
-  const username = command === "signup" ? await promptForUsername() : undefined;
   const session = await createOAuthSession(config.data);
 
   console.log(`Opening browser: ${session.authorizeUrl}`);
@@ -132,7 +135,7 @@ async function loginWithOAuth(
     state: session.state,
     verifier: session.verifier,
   });
-  const result = await mintCliApiKey(apiUrl, accessToken, { username });
+  const result = await mintCliApiKey(apiUrl, accessToken);
 
   await writeCredentials({
     apiUrl,
@@ -149,12 +152,11 @@ async function loginWithOAuth(
   return 0;
 }
 
-async function promptForUsername(): Promise<string> {
-  return input({
-    message: "Choose a Mainroom username",
-    required: true,
-    validate(value) {
-      return value.trim().length > 0 || "Username is required";
-    },
-  }).then((value) => value.trim());
+async function isLoggedIn(apiUrl: string): Promise<boolean> {
+  const credentials = await readCredentials();
+  if (!credentials || normalizeApiUrl(credentials.apiUrl) !== apiUrl) {
+    return false;
+  }
+
+  return (await verifyApiKey(credentials.apiUrl, credentials.token)).ok;
 }

@@ -295,7 +295,7 @@ export async function createCliApiKey(
   const verifiedUsername =
     typeof username === "string"
       ? await verifyCliSignupUsername(config, userId, username)
-      : undefined;
+      : await getCliSignupUsername(config, userId);
 
   return {
     apiKey: await createApiKey(config, {
@@ -306,6 +306,16 @@ export async function createCliApiKey(
     }),
     username: verifiedUsername,
   };
+}
+
+async function getCliSignupUsername(
+  config: AppConfig,
+  userId: string,
+): Promise<string | undefined> {
+  if (config.authMode === "mock") return undefined;
+
+  const user = await clerkApi(config, (client) => client.users.getUser(userId));
+  return user.username ?? undefined;
 }
 
 async function verifyCliSignupUsername(
