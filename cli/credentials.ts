@@ -1,4 +1,4 @@
-import { chmod, mkdir, rm } from "node:fs/promises";
+import { chmod, mkdir } from "node:fs/promises";
 import { z } from "zod";
 import { isMissingFile } from "./errors";
 import type { Credentials } from "./types";
@@ -31,7 +31,7 @@ export async function writeCredentials(
 }
 
 export async function deleteCredentials(): Promise<void> {
-  await rm(credentialsPath());
+  await Bun.file(credentialsPath()).delete();
 }
 
 export function credentialsPath(): string {
