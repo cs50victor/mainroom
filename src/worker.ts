@@ -1,8 +1,16 @@
 import { Container, getContainer, getRandom } from "@cloudflare/containers";
 
-import { getApiKeySecret, readConfig } from "./helpers";
+import {
+  authenticateOAuthToken,
+  ClerkApiError,
+  createApiKey,
+  getApiKeySecret,
+  readConfig,
+} from "./helpers";
+import { apiKeySchema } from "./schemas/api-keys";
 
 const instanceCount = 3;
+const cliApiKeyName = "Mainroom CLI";
 const machinePath = "/v0/machines";
 const tokenproxyEntrypoint = [
   "tokenproxy",
@@ -26,6 +34,9 @@ type Env = {
   AWS_SESSION_TOKEN?: string;
   CLERK_API_URL?: string;
   CLERK_API_VERSION?: string;
+  CLERK_OAUTH_AUTHORIZE_URL?: string;
+  CLERK_OAUTH_CLIENT_ID?: string;
+  CLERK_OAUTH_TOKEN_URL?: string;
   CLERK_SECRET_KEY: string;
   CORS_ORIGIN?: string;
   MACHINE_CONTROL_TOKEN: string;
@@ -59,6 +70,9 @@ export class MainroomContainer extends Container<Env> {
         "AUTH_MODE",
         "CLERK_API_URL",
         "CLERK_API_VERSION",
+        "CLERK_OAUTH_AUTHORIZE_URL",
+        "CLERK_OAUTH_CLIENT_ID",
+        "CLERK_OAUTH_TOKEN_URL",
       ]),
       CLERK_SECRET_KEY: env.CLERK_SECRET_KEY,
       CORS_ORIGIN: env.CORS_ORIGIN ?? "https://mainroom.sh",
@@ -238,6 +252,88 @@ async function machineRequest(
   return json({ error: "Method not allowed" }, 405);
 }
 
+async function cliAuthRequest(
+  request: Request,
+  env: Env,
+): Promise<Response | undefined> {
+  const url = new URL(request.url);
+
+  if (
+    url.pathname !== "/v0/auth/cli/config" &&
+    url.pathname !== "/v0/auth/cli/exchange"
+  ) {
+    return undefined;
+  }
+
+  if (request.method === "GET" && url.pathname === "/v0/auth/cli/config") {
+    if (
+      !env.CLERK_OAUTH_AUTHORIZE_URL ||
+      !env.CLERK_OAUTH_CLIENT_ID ||
+      !env.CLERK_OAUTH_TOKEN_URL
+    ) {
+      return json(
+        { error: "Browser login is not configured for this Mainroom instance" },
+        501,
+      );
+    }
+
+    return json({
+      authorizeUrl: env.CLERK_OAUTH_AUTHORIZE_URL,
+      clientId: env.CLERK_OAUTH_CLIENT_ID,
+      tokenUrl: env.CLERK_OAUTH_TOKEN_URL,
+    });
+  }
+
+  if (request.method === "POST" && url.pathname === "/v0/auth/cli/exchange") {
+    try {
+      const config = workerAppConfig(env);
+      const { userId } = await authenticateOAuthToken(config, request);
+      const apiKey = apiKeySchema.parse(
+        await createApiKey(config, {
+          name: cliApiKeyName,
+          subject: userId,
+          description: "Created by Mainroom CLI",
+          createdBy: userId,
+        }),
+      );
+
+      if (!apiKey.secret) {
+        return json(
+          { error: "Mainroom could not create a CLI credential" },
+          502,
+        );
+      }
+
+      return json({
+        apiKey: {
+          id: apiKey.id,
+          subject: apiKey.subject,
+          secret: apiKey.secret,
+        },
+      });
+    } catch (error) {
+      const response = cliAuthError(error);
+      return json({ error: response.error }, response.status);
+    }
+  }
+
+  return json({ error: "Method not allowed" }, 405);
+}
+
+function cliAuthError(error: unknown): {
+  error: string;
+  status: 400 | 401 | 502;
+} {
+  if (error instanceof ClerkApiError) {
+    if (error.status === 401) return { error: "Login failed", status: 401 };
+    if (error.status >= 400 && error.status < 500) {
+      return { error: error.message, status: 400 };
+    }
+  }
+
+  return { error: "Mainroom could not complete login", status: 502 };
+}
+
 function authorizeMachineRequest(
   request: Request,
   env: Env,
@@ -274,6 +370,9 @@ function workerAppConfig(env: Env) {
     AUTH_MODE: env.AUTH_MODE,
     CLERK_API_URL: env.CLERK_API_URL,
     CLERK_API_VERSION: env.CLERK_API_VERSION,
+    CLERK_OAUTH_AUTHORIZE_URL: env.CLERK_OAUTH_AUTHORIZE_URL,
+    CLERK_OAUTH_CLIENT_ID: env.CLERK_OAUTH_CLIENT_ID,
+    CLERK_OAUTH_TOKEN_URL: env.CLERK_OAUTH_TOKEN_URL,
     CLERK_SECRET_KEY: env.CLERK_SECRET_KEY,
     CORS_ORIGIN: env.CORS_ORIGIN,
     NODE_ENV: "production",
@@ -386,6 +485,16 @@ function r2Endpoint(accountId: string | undefined): string | undefined {
 
 export default {
   async fetch(request, env) {
+    /*
+     * USE WORKERS FOR PUBLIC CONTROL-PLANE ROUTES, NOT CONTAINERS.
+     *
+     * CONTAINERS CAN STAY WARM ACROSS DEPLOYS, SO NEW ENV VARS OR ROUTES MAY
+     * NOT BE AVAILABLE IMMEDIATELY. KEEP LOGIN, OAUTH, HEALTH, AND OTHER
+     * DEPLOYMENT-SENSITIVE ENTRYPOINTS IN THE WORKER BEFORE THIS FALLTHROUGH.
+     */
+    const cliResponse = await cliAuthRequest(request, env);
+    if (cliResponse) return cliResponse;
+
     const machineResponse = await machineRequest(request, env);
     if (machineResponse) return machineResponse;
 

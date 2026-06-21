@@ -19,6 +19,9 @@ export type AppConfig = {
   authMode: AuthMode;
   clerkApiUrl: string;
   clerkApiVersion: string;
+  clerkOAuthAuthorizeUrl?: string;
+  clerkOAuthClientId?: string;
+  clerkOAuthTokenUrl?: string;
   clerkSecretKey?: string;
   corsOrigins: string[];
   port: number;
@@ -82,6 +85,9 @@ export function readConfig(env: Env): AppConfig {
       env.CLERK_API_VERSION ?? "v1",
     ),
     clerkApiVersion: env.CLERK_API_VERSION ?? "v1",
+    clerkOAuthAuthorizeUrl: env.CLERK_OAUTH_AUTHORIZE_URL,
+    clerkOAuthClientId: env.CLERK_OAUTH_CLIENT_ID,
+    clerkOAuthTokenUrl: env.CLERK_OAUTH_TOKEN_URL,
     clerkSecretKey,
     corsOrigins,
     port,
@@ -227,6 +233,41 @@ export async function verifyApiKey(
   return clerkApi(config, (client) => client.apiKeys.verify(params.secret));
 }
 
+export async function authenticateOAuthToken(
+  config: AppConfig,
+  request: Request,
+): Promise<{ userId: string }> {
+  if (config.authMode === "mock") {
+    return { userId: "user_mock" };
+  }
+
+  if (!config.clerkSecretKey) {
+    throw new Error("CLERK_SECRET_KEY is required when AUTH_MODE=clerk");
+  }
+
+  const client = createClerkClient({
+    secretKey: config.clerkSecretKey,
+    apiUrl: config.clerkApiUrl,
+    apiVersion: config.clerkApiVersion,
+    userAgent: "mainroom/0.1.0",
+    telemetry: { disabled: true },
+  });
+  const state = await client.authenticateRequest(request, {
+    acceptsToken: "oauth_token",
+  });
+
+  if (!state.isAuthenticated) {
+    throw new ClerkApiError(401, "Unauthorized", undefined);
+  }
+
+  const auth = state.toAuth();
+  if (!auth.isAuthenticated || auth.tokenType !== "oauth_token") {
+    throw new ClerkApiError(401, "Unauthorized", undefined);
+  }
+
+  return { userId: auth.userId };
+}
+
 async function clerkApi<T>(
   config: AppConfig,
   callback: (client: ClerkClient) => Promise<T>,
@@ -251,7 +292,7 @@ async function clerkApi<T>(
         error.status ?? 502,
         error.errors[0]?.longMessage ??
           error.errors[0]?.message ??
-          "Clerk request failed",
+          "API key service request failed",
         error,
       );
     }

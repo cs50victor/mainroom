@@ -8,5 +8,5 @@
     "target": "ESNext",
     "types": ["bun"]
   },
-  "include": ["src/index.ts"]
+  "include": ["src/index.ts", "cli/mainroom.ts"]
 }

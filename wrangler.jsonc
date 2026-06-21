@@ -18,6 +18,9 @@
     },
   ],
   "vars": {
+    "CLERK_OAUTH_AUTHORIZE_URL": "https://clerk.mainroom.sh/oauth/authorize",
+    "CLERK_OAUTH_CLIENT_ID": "Bvbh1z5AiDEw6Mwm",
+    "CLERK_OAUTH_TOKEN_URL": "https://clerk.mainroom.sh/oauth/token",
     "CORS_ORIGIN": "https://mainroom.sh",
   },
   "secrets": {
