@@ -59,7 +59,7 @@ const openApiDocument = createOpenApiDocument(
         clerkApiKey: {
           type: "http",
           scheme: "bearer",
-          description: "Clerk API key secret",
+          description: "Mainroom API key secret",
         },
       },
     },

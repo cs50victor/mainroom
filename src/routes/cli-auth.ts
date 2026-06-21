@@ -17,7 +17,7 @@ export function createCliAuthRoute(config: AppConfig): Hono {
     const oauthConfig = cliOAuthConfig(config);
     if (!oauthConfig) {
       return c.json(
-        { error: "CLI OAuth is not configured for this Mainroom instance" },
+        { error: "Browser login is not configured for this Mainroom instance" },
         501,
       );
     }
@@ -32,13 +32,16 @@ export function createCliAuthRoute(config: AppConfig): Hono {
         await createApiKey(config, {
           name: cliApiKeyName,
           subject: userId,
-          description: "Created by mainroom login",
+          description: "Created by Mainroom CLI",
           createdBy: userId,
         }),
       );
 
       if (!apiKey.secret) {
-        return c.json({ error: "Clerk did not return an API key secret" }, 502);
+        return c.json(
+          { error: "Mainroom could not create a CLI credential" },
+          502,
+        );
       }
 
       return c.json({
@@ -84,11 +87,11 @@ function authError(error: unknown): {
   status: 400 | 401 | 502;
 } {
   if (error instanceof ClerkApiError) {
-    if (error.status === 401) return { error: "Unauthorized", status: 401 };
+    if (error.status === 401) return { error: "Login failed", status: 401 };
     if (error.status >= 400 && error.status < 500) {
       return { error: error.message, status: 400 };
     }
   }
 
-  return { error: "Clerk request failed", status: 502 };
+  return { error: "Mainroom could not complete login", status: 502 };
 }

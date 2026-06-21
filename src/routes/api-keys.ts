@@ -39,7 +39,7 @@ function clerkError(error: unknown): {
     }
   }
 
-  return { error: "Clerk request failed", status: 502 };
+  return { error: "API key service request failed", status: 502 };
 }
 
 const keyRouteResponses = {

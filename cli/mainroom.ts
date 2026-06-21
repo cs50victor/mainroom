@@ -11,7 +11,7 @@ const version = "0.1.0";
 
 program
   .name("mainroom")
-  .description("Use Mainroom from your terminal.")
+  .description("Use Mainroom from the command line.")
   .version(version, "-v, --version", "Show version")
   .showHelpAfterError()
   .addHelpText(
@@ -25,13 +25,13 @@ Examples:
   );
 
 authCommand
-  .description("Create accounts, log in, and manage local credentials.")
+  .description("Log in, sign up, and manage saved credentials.")
   .showHelpAfterError()
   .addHelpText(
     "after",
     `
-First-time users should run signup. The browser flow can create a Clerk account,
-then Mainroom stores a local API key for future CLI commands.
+New users should start with signup. Mainroom opens your browser, then saves your
+login for future CLI commands.
 
 Examples:
   $ mainroom auth signup
@@ -42,7 +42,7 @@ Examples:
 
 authCommand
   .command("signup")
-  .description("Create a Clerk account or sign in, then save a local API key.")
+  .description("Create a Mainroom account or connect an existing one.")
   .option("--api-url <url>", "Mainroom API origin", defaultApiUrl)
   .action((options: AuthCommandOptions) =>
     runCommand(() => login(options, "signup")),
@@ -50,38 +50,32 @@ authCommand
 
 authCommand
   .command("login")
-  .description(
-    "Log in to an existing account, with account creation available.",
-  )
+  .description("Log in to Mainroom on this device.")
   .option("--api-url <url>", "Mainroom API origin", defaultApiUrl)
-  .option("--with-token", "Read an existing Mainroom API key from stdin")
+  .option(
+    "--with-token",
+    "Read an existing Mainroom API key from standard input",
+  )
   .action((options: AuthCommandOptions) =>
     runCommand(() => login(options, "login")),
   );
 
 authCommand
   .command("logout")
-  .description("Remove saved authentication.")
+  .description("Log out of Mainroom on this device.")
   .action(() => runCommand(logout));
 
 authCommand
   .command("status")
-  .description("Display saved authentication state.")
+  .description("Show login status.")
   .action(() => runCommand(authStatus));
 
 program.addCommand(authCommand);
 
 program
   .command("ping")
-  .description("Call the authenticated ping endpoint.")
+  .description("Check the API connection.")
   .action(() => runCommand(ping));
-
-program
-  .command("hello")
-  .description("Print hello.")
-  .action(() => {
-    console.log("hello");
-  });
 
 async function runCommand(command: () => Promise<number>): Promise<void> {
   try {

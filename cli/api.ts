@@ -91,7 +91,7 @@ async function requestJson<T>(
         ok: false,
         error:
           errorFromBody(body) ??
-          `Mainroom request failed with HTTP ${response.status}`,
+          `Mainroom request failed with status ${response.status}`,
       };
     }
 
@@ -99,7 +99,7 @@ async function requestJson<T>(
   } catch (error) {
     return {
       ok: false,
-      error: `Mainroom request failed: ${errorMessage(error)}`,
+      error: `Could not reach Mainroom: ${errorMessage(error)}`,
     };
   }
 }

@@ -31,26 +31,28 @@ export async function logout(): Promise<number> {
     await deleteCredentials();
   } catch (error) {
     if (!isMissingFile(error)) {
-      console.error(`Failed to remove credentials: ${errorMessage(error)}`);
+      console.error(`Could not log out: ${errorMessage(error)}`);
       return 1;
     }
   }
 
-  console.log("Logged out");
+  console.log("Logged out of Mainroom");
   return 0;
 }
 
 export async function authStatus(): Promise<number> {
   const credentials = await readCredentials();
   if (!credentials) {
-    console.log("Not logged in");
+    console.log("You are not logged in");
     return 1;
   }
 
   const result = await verifyApiKey(credentials.apiUrl, credentials.token);
 
   if (!result.ok) {
-    console.log(`Not logged in to ${credentials.apiUrl}: ${result.error}`);
+    console.log(
+      `Login check failed for ${credentials.apiUrl}: ${result.error}`,
+    );
     return 1;
   }
 
@@ -61,7 +63,7 @@ export async function authStatus(): Promise<number> {
 export async function ping(): Promise<number> {
   const credentials = await readCredentials();
   if (!credentials) {
-    console.error("Not logged in. Run `mainroom auth signup` first.");
+    console.error("You are not logged in. Run `mainroom auth signup` first.");
     return 1;
   }
 
@@ -79,7 +81,7 @@ export async function ping(): Promise<number> {
 async function loginWithToken(apiUrl: string): Promise<number> {
   const token = (await Bun.stdin.text()).trim();
   if (!token) {
-    console.error("No API key received on stdin.");
+    console.error("No API key provided on standard input.");
     return 1;
   }
 
@@ -106,18 +108,20 @@ async function loginWithOAuth(
   const config = await fetchCliOAuthConfig(apiUrl);
   if (!config.ok) {
     console.error(config.error);
-    console.error("You can still use `mainroom auth login --with-token`.");
+    console.error(
+      "To use an existing API key, run `mainroom auth login --with-token`.",
+    );
     return 1;
   }
 
   const session = await createOAuthSession(config.data);
 
-  console.log(`Opening ${session.authorizeUrl}`);
+  console.log(`Opening browser: ${session.authorizeUrl}`);
   openBrowser(session.authorizeUrl);
   console.log(
     command === "signup"
-      ? "Waiting for browser sign-up..."
-      : "Waiting for browser sign-in...",
+      ? "Complete signup in your browser."
+      : "Complete login in your browser.",
   );
 
   const code = await session.codePromise;

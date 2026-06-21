@@ -44,7 +44,7 @@ export function createV0Route(config: AppConfig): Hono {
     "/ping",
     openApi({
       tags: ["V0"],
-      summary: "API key authenticated ping",
+      summary: "Check API key access",
       security: [{ clerkApiKey: [] }],
       responses: {
         200: z.object({
