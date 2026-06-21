@@ -377,6 +377,22 @@ export async function isCliUsernameTaken(
   return users.data.length > 0;
 }
 
+export async function getCliUsernameSubject(
+  config: AppConfig,
+  username: string,
+): Promise<string | undefined> {
+  // Username routing is public lookup only; bearer auth still happens at the route boundary.
+  const error = cliUsernameError(username);
+  if (error) return undefined;
+  if (config.authMode === "mock") return "user_mock";
+
+  const users = await clerkApi(config, (client) =>
+    client.users.getUserList({ username: [username], limit: 1 }),
+  );
+
+  return users.data[0]?.id;
+}
+
 async function clerkApi<T>(
   config: AppConfig,
   callback: (client: ClerkClient) => Promise<T>,

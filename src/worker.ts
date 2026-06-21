@@ -4,6 +4,7 @@ import {
   ClerkApiError,
   createCliApiKey,
   getApiKeySecret,
+  getCliUsernameSubject,
   isCliUsernameTaken,
   readConfig,
 } from "./helpers";
@@ -12,6 +13,7 @@ import { apiKeySchema } from "./schemas/api-keys";
 const rootHost = "mainroom.sh";
 const instanceCount = 3;
 const machinePath = "/v0/machines";
+// tokenproxy is the inference data plane; Mainroom only starts it and routes to it.
 const tokenproxyEntrypoint = [
   "tokenproxy",
   "-c",
@@ -53,6 +55,8 @@ type Env = {
   USER_MACHINE_CONTAINER: DurableObjectNamespace<UserMachineContainer>;
 };
 
+// Durable Object storage is the machine source of truth; tokenproxy process state is disposable.
+// Future desired config fields belong here, while live tokenproxy status stays observational.
 type UserMachineRecord = {
   apiKeyId: string;
   id: string;
@@ -136,6 +140,7 @@ export class UserMachineContainer extends Container<Env> {
   }
 
   override async fetch(request: Request): Promise<Response> {
+    // Every user-machine fetch is also a wake-up path for sleeping tokenproxy containers.
     const record = await this.ctx.storage.get<UserMachineRecord>(
       this.storageKey,
     );
@@ -148,6 +153,8 @@ export class UserMachineContainer extends Container<Env> {
   }
 
   private async startMachine(record: UserMachineRecord): Promise<void> {
+    // Mainroom injects only the user's private tokenproxy bearer on the private container hop.
+    // Runtime object reads should move to signed HTTPS URLs, not long-lived S3 credentials.
     const { secret } = await getApiKeySecret(
       workerAppConfig(this.env),
       record.apiKeyId,
@@ -173,6 +180,8 @@ export class UserMachineContainer extends Container<Env> {
 }
 
 function proxiedRequest(request: Request): Request {
+  // Forwarding metadata belongs to Mainroom; OpenAI-compatible request parsing stays in tokenproxy.
+  // The caller bearer is preserved until provider-edge grant checks learn to swap it privately.
   const url = new URL(request.url);
   const headers = new Headers(request.headers);
   const cf = request.cf;
@@ -190,6 +199,29 @@ function proxiedRequest(request: Request): Request {
   }
 
   return new Request(request, { headers });
+}
+
+async function userMachineV1Request(
+  request: Request,
+  env: Env,
+): Promise<Response | undefined> {
+  const url = new URL(request.url);
+  if (!url.pathname.startsWith("/v1/")) return undefined;
+
+  const username = usernameFromMainroomHost(url.hostname);
+  if (!username) return undefined;
+
+  // The subdomain names the provider; Clerk maps that public name back to the durable subject.
+  const subject = await getCliUsernameSubject(workerAppConfig(env), username);
+  if (!subject) return json({ error: "User machine not found" }, 404);
+
+  // This is the provider-edge seam for future owner-vs-peer grant, scope, and cap checks.
+  // Non-owner peer calls must be authorized here before Mainroom injects the provider bearer.
+  // Deterministic user:<subject> routing keeps one logical tokenproxy machine per user.
+  const machine = getContainer(env.USER_MACHINE_CONTAINER, machineId(subject));
+
+  // Container.fetch, not containerFetch, preserves WebSocket upgrades for /v1/responses.
+  return machine.fetch(proxiedRequest(request));
 }
 
 async function machineRequest(
@@ -341,6 +373,7 @@ async function usernameStatusRequest(
 }
 
 function usernameFromMainroomHost(hostname: string): string | undefined {
+  // Only single-label user subdomains are routable; nested labels stay out of user identity.
   const suffix = `.${rootHost}`;
   if (!hostname.endsWith(suffix)) return undefined;
 
@@ -393,6 +426,7 @@ async function readJson(request: Request): Promise<Record<string, unknown>> {
 }
 
 function machineId(subject: string): string {
+  // User machines are keyed by subject, not username, so username changes do not orphan state.
   return `user:${subject}`;
 }
 
@@ -544,6 +578,10 @@ export default {
      */
     const cliResponse = await cliAuthRequest(request, env);
     if (cliResponse) return cliResponse;
+
+    // User subdomain inference traffic stays on the Worker edge instead of the app container.
+    const userMachineResponse = await userMachineV1Request(request, env);
+    if (userMachineResponse) return userMachineResponse;
 
     const usernameStatusResponse = await usernameStatusRequest(request, env);
     if (usernameStatusResponse) return usernameStatusResponse;
