@@ -37,6 +37,7 @@ type Env = {
   CLERK_OAUTH_AUTHORIZE_URL?: string;
   CLERK_OAUTH_CLIENT_ID?: string;
   CLERK_OAUTH_TOKEN_URL?: string;
+  CLERK_PUBLISHABLE_KEY: string;
   CLERK_SECRET_KEY: string;
   CORS_ORIGIN?: string;
   MACHINE_CONTROL_TOKEN: string;
@@ -75,6 +76,7 @@ export class MainroomContainer extends Container<Env> {
         "CLERK_OAUTH_TOKEN_URL",
       ]),
       CLERK_SECRET_KEY: env.CLERK_SECRET_KEY,
+      CLERK_PUBLISHABLE_KEY: env.CLERK_PUBLISHABLE_KEY,
       CORS_ORIGIN: env.CORS_ORIGIN ?? "https://mainroom.sh",
       NODE_ENV: "production",
       PORT: "3000",
@@ -402,6 +404,7 @@ function workerAppConfig(env: Env) {
     CLERK_OAUTH_AUTHORIZE_URL: env.CLERK_OAUTH_AUTHORIZE_URL,
     CLERK_OAUTH_CLIENT_ID: env.CLERK_OAUTH_CLIENT_ID,
     CLERK_OAUTH_TOKEN_URL: env.CLERK_OAUTH_TOKEN_URL,
+    CLERK_PUBLISHABLE_KEY: env.CLERK_PUBLISHABLE_KEY,
     CLERK_SECRET_KEY: env.CLERK_SECRET_KEY,
     CORS_ORIGIN: env.CORS_ORIGIN,
     NODE_ENV: "production",
