@@ -35,8 +35,10 @@ The design is deliberately split:
 - Any fetch to a user machine reloads the durable record and starts the
   container before forwarding.
   Source: [`src/worker.ts`](../src/worker.ts#L138-L147).
-- `startMachine` gets the user's API key secret, passes S3/R2 environment
-  variables, injects `TOKENPROXY_CLIENT_KEY`, and runs the tokenproxy entrypoint.
+- `startMachine` gets the user's API key secret, injects
+  `TOKENPROXY_CLIENT_KEY`, and runs the tokenproxy entrypoint. Mainroom should
+  pass temporary signed object URLs for config/auth material rather than S3/R2
+  credentials.
   Source: [`src/worker.ts`](../src/worker.ts#L150-L171).
 - Mainroom API keys can be fetched, verified, and revoked through the current
   Clerk-backed helper path. The first federation design should reuse that
@@ -57,7 +59,8 @@ The design is deliberately split:
   Source: [`src/worker.ts`](../src/worker.ts#L320-L351).
 - `mainroom codex sync` currently checks sign-in, scans local Codex auth files,
   uploads selected unexpired JSON files, prints the resulting `s3://` object,
-  and stops.
+  and stops. The target runtime path should use signed object URLs instead of
+  passing S3 credentials into tokenproxy.
   Source: [`cli/codex.ts`](../cli/codex.ts#L45-L106).
 - The CLI finds `~/.codex/auth.json` or `$CODEX_HOME/auth.json`.
   Source: [`cli/codex.ts`](../cli/codex.ts#L197-L202).
@@ -70,78 +73,85 @@ The design is deliberately split:
 ### tokenproxy facts
 
 These citations point at tokenproxy `upstream/main` commit
-`9a9e3a266a246528130e1dbce2e19a7cdeb42e55`, not the local dirty checkout.
+`eb3d4501bc52d36eee3b0005f019e67c8e7e4702` / `v0.1.14`, not the local dirty
+checkout.
 
-- tokenproxy parses local config and CLI `-c key=value` overrides, then calls
+- tokenproxy parses local or signed `https://` config URLs and CLI
+  `-c key=value` overrides, then calls
   `load_effective_config`, discovers models, creates `AppState`, and serves the
   Axum app.
   Source:
-  [`src/main.rs`](https://github.com/cs50victor/tokenproxy/blob/9a9e3a266a246528130e1dbce2e19a7cdeb42e55/src/main.rs#L52-L130).
-- tokenproxy's top-level config file is read with `std::fs::read_to_string`.
-  It does not currently read the top-level config from S3.
+  [`src/main.rs`](https://github.com/cs50victor/tokenproxy/blob/eb3d4501bc52d36eee3b0005f019e67c8e7e4702/src/main.rs).
+- tokenproxy's top-level `--config` accepts a local file or signed HTTPS URL.
+  Remote config reads use `FileProvider::read_remote_url_to_string`, and signed
+  URL query strings are redacted in read errors.
   Source:
-  [`src/main.rs`](https://github.com/cs50victor/tokenproxy/blob/9a9e3a266a246528130e1dbce2e19a7cdeb42e55/src/main.rs#L152-L160).
-- `AppState` stores `effective: Arc<EffectiveConfig>`, a shared reqwest
-  client, usage windows, and per-account health.
+  [`src/main.rs`](https://github.com/cs50victor/tokenproxy/blob/eb3d4501bc52d36eee3b0005f019e67c8e7e4702/src/main.rs) and
+  [`src/config.rs`](https://github.com/cs50victor/tokenproxy/blob/eb3d4501bc52d36eee3b0005f019e67c8e7e4702/src/config.rs).
+- `AppState` stores `effective: Arc<RwLock<Arc<EffectiveConfig>>>`, a shared
+  reqwest client, usage windows, per-account health, config status, and a reload
+  gate.
   Source:
-  [`src/server/state.rs`](https://github.com/cs50victor/tokenproxy/blob/9a9e3a266a246528130e1dbce2e19a7cdeb42e55/src/server/state.rs#L18-L30).
-- `AppState::new_with_log_format_and_shutdown` builds account health cells from
-  the effective config and stores the effective config in a plain `Arc`.
+  [`src/server/state.rs`](https://github.com/cs50victor/tokenproxy/blob/eb3d4501bc52d36eee3b0005f019e67c8e7e4702/src/server/state.rs).
+- tokenproxy exposes admin config status and reload routes:
+  `GET /admin/config/status` and `POST /admin/config/reload`.
   Source:
-  [`src/server/state.rs`](https://github.com/cs50victor/tokenproxy/blob/9a9e3a266a246528130e1dbce2e19a7cdeb42e55/src/server/state.rs#L167-L206).
+  [`src/server/state/proxy.rs`](https://github.com/cs50victor/tokenproxy/blob/eb3d4501bc52d36eee3b0005f019e67c8e7e4702/src/server/state/proxy.rs).
 - Supported routes already include `/v1/models`, `/v1/chat/completions`,
   `/v1/messages`, `POST /v1/responses`, `GET /v1/responses` for WebSockets,
   and `/v1/responses/compact`.
   Source:
-  [`src/server/proxy.rs`](https://github.com/cs50victor/tokenproxy/blob/9a9e3a266a246528130e1dbce2e19a7cdeb42e55/src/server/proxy.rs#L188-L225).
+  [`src/server/state/proxy.rs`](https://github.com/cs50victor/tokenproxy/blob/eb3d4501bc52d36eee3b0005f019e67c8e7e4702/src/server/state/proxy.rs).
 - tokenproxy does not currently route legacy `POST /v1/completions`; this spec
   treats "completions" as Chat Completions unless a later tokenproxy change adds
   the legacy route.
   Source:
-  [`src/server/proxy.rs`](https://github.com/cs50victor/tokenproxy/blob/9a9e3a266a246528130e1dbce2e19a7cdeb42e55/src/server/proxy.rs#L188-L225).
+  [`src/server/state/proxy.rs`](https://github.com/cs50victor/tokenproxy/blob/eb3d4501bc52d36eee3b0005f019e67c8e7e4702/src/server/state/proxy.rs).
 - tokenproxy exposes `/usage` and `/metrics` built from usage windows and account
   health.
   Source:
-  [`src/server/proxy.rs`](https://github.com/cs50victor/tokenproxy/blob/9a9e3a266a246528130e1dbce2e19a7cdeb42e55/src/server/proxy.rs#L235-L282).
+  [`src/server/state/proxy.rs`](https://github.com/cs50victor/tokenproxy/blob/eb3d4501bc52d36eee3b0005f019e67c8e7e4702/src/server/state/proxy.rs).
 - Account config already has endpoint capability booleans for chat
   completions, responses, responses WebSocket, compact, and Anthropic messages.
   Source:
-  [`src/config.rs`](https://github.com/cs50victor/tokenproxy/blob/9a9e3a266a246528130e1dbce2e19a7cdeb42e55/src/config.rs#L143-L164).
-- Current account kinds are `openai_api_key`, `anthropic_api_key`, and
-  `chatgpt_codex_auth_json`.
+  [`src/config.rs`](https://github.com/cs50victor/tokenproxy/blob/eb3d4501bc52d36eee3b0005f019e67c8e7e4702/src/config.rs).
+- Current account kinds are `openai_api_key`, `anthropic_api_key`,
+  `chatgpt_codex_auth_json`, and `mainroom_peer`.
   Source:
-  [`src/config.rs`](https://github.com/cs50victor/tokenproxy/blob/9a9e3a266a246528130e1dbce2e19a7cdeb42e55/src/config.rs#L217-L226).
+  [`src/config.rs`](https://github.com/cs50victor/tokenproxy/blob/eb3d4501bc52d36eee3b0005f019e67c8e7e4702/src/config.rs).
 - `load_effective_config` turns API-key accounts into bearer tokens from env
   vars and ChatGPT Codex accounts into bearer tokens from `auth_json_path`.
   Source:
-  [`src/config.rs`](https://github.com/cs50victor/tokenproxy/blob/9a9e3a266a246528130e1dbce2e19a7cdeb42e55/src/config.rs#L401-L489).
-- `auth_json_path` may be local absolute path or `s3://bucket/key`.
+  [`src/config.rs`](https://github.com/cs50victor/tokenproxy/blob/eb3d4501bc52d36eee3b0005f019e67c8e7e4702/src/config.rs).
+- `auth_json_path` may be a local absolute path or signed HTTPS URL. Remote auth
+  JSON reads use the same remote URL reader and redact signed query strings in
+  errors.
   Source:
-  [`src/config.rs`](https://github.com/cs50victor/tokenproxy/blob/9a9e3a266a246528130e1dbce2e19a7cdeb42e55/src/config.rs#L687-L740).
-- S3 auth JSON is read through `object_store::parse_url_opts` using process
-  environment variables.
+  [`src/config.rs`](https://github.com/cs50victor/tokenproxy/blob/eb3d4501bc52d36eee3b0005f019e67c8e7e4702/src/config.rs).
+- tokenproxy no longer needs S3/R2 credentials for remote config or auth JSON
+  reads in the Mainroom path. The remote object interface is signed HTTPS URLs,
+  not `s3://` URIs.
   Source:
-  [`src/config.rs`](https://github.com/cs50victor/tokenproxy/blob/9a9e3a266a246528130e1dbce2e19a7cdeb42e55/src/config.rs#L793-L815).
+  [`src/config.rs`](https://github.com/cs50victor/tokenproxy/blob/eb3d4501bc52d36eee3b0005f019e67c8e7e4702/src/config.rs).
 - tokenproxy rejects `chatgpt_codex_auth_json` accounts that claim chat
   completion support. This means Codex OAuth can back Responses/Codex-style
   traffic, but not OpenAI Chat Completions in current tokenproxy.
   Source:
-  [`src/config.rs`](https://github.com/cs50victor/tokenproxy/blob/9a9e3a266a246528130e1dbce2e19a7cdeb42e55/src/config.rs#L906-L914).
-- For each selected account, tokenproxy builds upstream auth from
-  `account.bearer_token` and the account kind.
+- For each selected account, tokenproxy builds upstream auth from the account
+  kind. `mainroom_peer` forwards the inbound bearer to the peer Mainroom edge.
   Source:
-  [`src/server/proxy.rs`](https://github.com/cs50victor/tokenproxy/blob/9a9e3a266a246528130e1dbce2e19a7cdeb42e55/src/server/proxy.rs#L2192-L2220).
+  [`src/http/forward.rs`](https://github.com/cs50victor/tokenproxy/blob/eb3d4501bc52d36eee3b0005f019e67c8e7e4702/src/http/forward.rs).
 - Selection already filters on endpoint support, model allowlists, service
   tiers, WebSocket support, health, and pinned continuation account.
   Source:
-  [`src/routing/select.rs`](https://github.com/cs50victor/tokenproxy/blob/9a9e3a266a246528130e1dbce2e19a7cdeb42e55/src/routing/select.rs#L43-L160).
+  [`src/routing/select.rs`](https://github.com/cs50victor/tokenproxy/blob/eb3d4501bc52d36eee3b0005f019e67c8e7e4702/src/routing/select.rs).
 - Route requests already carry `pinned_account_id` and a flag for incremental
   `previous_response_id` support.
   Source:
-  [`src/routing/account.rs`](https://github.com/cs50victor/tokenproxy/blob/9a9e3a266a246528130e1dbce2e19a7cdeb42e55/src/routing/account.rs#L52-L62).
+  [`src/routing/account.rs`](https://github.com/cs50victor/tokenproxy/blob/eb3d4501bc52d36eee3b0005f019e67c8e7e4702/src/routing/account.rs).
 - tokenproxy only retries before upstream commit.
   Source:
-  [`src/server/proxy.rs`](https://github.com/cs50victor/tokenproxy/blob/9a9e3a266a246528130e1dbce2e19a7cdeb42e55/src/server/proxy.rs#L3200-L3264).
+  [`src/server/state/proxy.rs`](https://github.com/cs50victor/tokenproxy/blob/eb3d4501bc52d36eee3b0005f019e67c8e7e4702/src/server/state/proxy.rs).
 
 ### Platform and API facts
 
@@ -388,7 +398,8 @@ persist desired state in two places:
    sharing graph revision, peer grants, and reconcile status.
 2. R2/S3 for larger or secret-bearing blobs:
    uploaded auth JSON, rendered tokenproxy config, and immutable revision
-   snapshots.
+   snapshots. Mainroom stores object keys durably and mints temporary signed
+   HTTPS URLs when tokenproxy needs to read an object.
 
 Suggested object layout:
 
@@ -405,6 +416,7 @@ tokenproxy/users/<encoded-subject>/configs/current.json
 {
   "revision": 42,
   "config_key": "tokenproxy/users/userA/configs/rev-00000042.toml",
+  "config_signed_url_expires_at": "2026-06-21T00:15:00Z",
   "config_sha256": "9f...",
   "rendered_at": "2026-06-21T00:00:00Z",
   "tokenproxy_version": "0.8.0"
@@ -414,33 +426,37 @@ tokenproxy/users/<encoded-subject>/configs/current.json
 The immutable revision object makes audits and rollbacks easy. The stable
 `current.*` objects make startup simple.
 
-## Required tokenproxy changes
+## Current tokenproxy support
 
-### 1. Remote top-level config loading
+Recent tokenproxy commits already landed the data-plane primitives this spec
+needs:
 
-tokenproxy should accept S3/R2 config locations, preferably by extending
-`--config` to accept `s3://bucket/key` in addition to local paths.
+### 1. Signed remote object loading
+
+tokenproxy accepts signed HTTPS URLs for remote runtime objects. This is the
+Mainroom runtime contract: Mainroom owns S3/R2 credentials, stores durable object
+keys, and passes tokenproxy only temporary signed read URLs.
 
 Reasoning:
 
-- tokenproxy already uses `object_store` to read S3 `auth_json_path`, so the
-  dependency and credential path already exist.
-- Mainroom already passes S3/R2 environment variables into user machines.
-- If top-level config remains local-only, Mainroom must either generate a file
-  inside ephemeral container disk or encode the full account list into `-c`
-  overrides. Both are weaker than reading the durable rendered config directly.
+- tokenproxy `v0.1.14` replaced the old `s3://` remote read path with signed
+  HTTPS URL reads.
+- `--config` accepts `FILE_OR_URL` and fetches signed `https://` config URLs.
+- `auth_json_path` accepts signed `https://` auth JSON URLs.
+- Admin reload accepts `config_url` for signed remote config reloads.
+- Remote URL read errors redact signed query strings.
 
-Startup should become:
+Startup should use:
 
 ```text
-tokenproxy --config s3://<bucket>/tokenproxy/users/<subject>/configs/current.toml \
+tokenproxy --config https://storage.example/tokenproxy/users/<subject>/configs/current.toml?X-Amz-Signature=... \
   -c server.bind='0.0.0.0:8787' \
   -c server.allow_non_loopback=true
 ```
 
 ### 2. `mainroom_peer` account kind
 
-Add a fourth account kind:
+tokenproxy has a fourth account kind:
 
 ```rust
 enum AccountKind {
@@ -451,7 +467,7 @@ enum AccountKind {
 }
 ```
 
-`MainroomPeer` should:
+`MainroomPeer`:
 
 - Use `base_url` as an OpenAI-compatible upstream root.
 - Support any subset of `/v1/chat/completions`, `/v1/responses`,
@@ -482,8 +498,7 @@ too broad for the threat model.
 
 ### 3. Live config status and reload
 
-Add tokenproxy admin endpoints bound to the existing downstream bearer token or
-a stronger `TOKENPROXY_ADMIN_KEY`:
+tokenproxy exposes admin endpoints bound to the configured admin token:
 
 ```text
 GET  /admin/config/status
@@ -514,18 +529,19 @@ POST /admin/config/reload
 }
 ```
 
-`POST /admin/config/reload` should accept either:
+`POST /admin/config/reload` accepts inline config or a signed config URL and can
+preserve the same container-level CLI overrides used at startup:
 
 ```json
 {
   "revision": 43,
   "config_sha256": "ab...",
-  "config_s3_uri": "s3://bucket/tokenproxy/users/userA/configs/rev-00000043.toml"
+  "config_url": "https://storage.example/tokenproxy/users/userA/configs/rev-00000043.toml?X-Amz-Signature=..."
 }
 ```
 
-or the full config body. The S3 URI path is better for Mainroom because it keeps
-the durable object write small.
+Mainroom can keep the durable source in S3/R2, mint a short-lived signed URL,
+and submit that URL for reload without exposing S3/R2 credentials to tokenproxy.
 
 Reload algorithm:
 
@@ -542,10 +558,10 @@ Reload algorithm:
 10. Atomically swap the runtime config.
 11. Return the new revision and effective account count.
 
-Implementation detail: replace `AppState.effective: Arc<EffectiveConfig>` with
-an atomically swappable runtime handle, for example `arc_swap::ArcSwap` or a
-small `tokio::sync::watch<Arc<RuntimeConfig>>` wrapper. Avoid holding a broad
-mutex on the hot path.
+Implementation detail: tokenproxy now stores
+`AppState.effective: Arc<RwLock<Arc<EffectiveConfig>>>`, so reload swaps the
+effective config for new requests while in-flight requests keep using the config
+they already captured.
 
 Requests that already captured an `Arc` continue using the old config until
 they finish. New requests see the new config. This is the reason to swap an
@@ -611,7 +627,9 @@ type UserMachineRecord = {
   username: string;
   desiredRevision: number;
   desiredConfigSha256: string;
-  desiredConfigS3Uri: string;
+  desiredConfigObjectKey: string;
+  desiredConfigSignedUrl?: string;
+  desiredConfigSignedUrlExpiresAt?: string;
   desiredTokenproxyVersion: string;
   runningRevision?: number;
   runningConfigSha256?: string;
@@ -635,7 +653,8 @@ Algorithm:
 
 1. Load `UserMachineRecord` from Durable Object storage.
 2. If no record exists, return `404`.
-3. If the container is stopped, start it with the latest desired config S3 URI.
+3. If the container is stopped, mint a fresh signed config URL and start it with
+   that URL.
 4. If the container is running, call tokenproxy
    `GET /admin/config/status`.
 5. If status revision and hash match desired state, record running state and
@@ -659,7 +678,6 @@ The CLI should move from "upload JSON only" to a desired-state sync:
 ```text
 mainroom sync
 mainroom codex sync
-mainroom sync --watch
 ```
 
 `mainroom codex sync` may remain as an alias, but the broader `mainroom sync`
@@ -689,8 +707,8 @@ The server should:
 1. Verify the Mainroom CLI bearer token.
 2. Validate JSON and expiry.
 3. Write changed auth blobs to S3/R2.
-4. Render the desired tokenproxy config from current auth objects and sharing
-   graph.
+4. Mint temporary signed auth JSON URLs and render the desired tokenproxy config
+   from current auth objects and sharing graph.
 5. Write immutable and current config objects.
 6. Increment the desired config revision if the rendered config hash changed.
 7. Persist desired state in the user machine DO.
@@ -730,7 +748,7 @@ The sequence should be:
 2. Sync updates DO desired revision.
 3. Sync calls `reconcile`.
 4. `reconcile` asks tokenproxy for its live config status.
-5. If stale, `reconcile` calls live reload.
+5. If stale, `reconcile` mints fresh signed URLs and calls live reload.
 6. If live reload is unsupported or unsafe, `reconcile` restarts the container.
 
 This answers the question "should tokenproxy have an endpoint to update config
@@ -743,13 +761,14 @@ live reloaded safely.
 Nothing important should be lost. On the next request or explicit sync:
 
 1. `UserMachineContainer.fetch()` loads the durable machine record.
-2. `startMachine` starts tokenproxy with the latest persisted config S3 URI.
-3. tokenproxy reads current config from S3/R2.
+2. `startMachine` mints a fresh signed URL for the latest persisted config.
+3. tokenproxy reads current config from the signed URL.
 4. The DO records the observed running revision after status succeeds.
 
 This answers the persistence question: tokenproxy's in-memory config is a cache,
 not storage. Mainroom's DO plus S3/R2 config object persists the sharing config
-across process stops.
+across process stops, and signed URLs are temporary read handles, not durable
+state.
 
 ## Keeping S3 auth JSON fresh
 
@@ -757,33 +776,29 @@ There are two different stale-file cases.
 
 ### Local auth file changes after a sync
 
-No remote system can know a laptop file changed if no local process is running.
-So Mainroom should support both explicit sync and watch mode:
+No remote system can know a laptop file changed. Mainroom should support
+explicit sync:
 
 ```text
 mainroom sync
-mainroom sync --watch
 ```
 
 Explicit sync computes a SHA-256 of each local auth file and uploads when the
 local hash differs from the server's last stored hash.
 
-Watch mode keeps running locally, watches file stat data, debounces changes,
-recomputes the content hash, uploads changed JSON, and triggers reconcile.
-
-The minimum reliable rule is content hash, not mtime. mtime is only a cheap
-change detector.
+The minimum reliable rule is content hash.
 
 ### Remote tokenproxy auth changes
 
 Remote tokenproxy should not edit OAuth JSON on container disk. The remote
-process should read S3/R2 auth JSON at startup and reload. If tokenproxy later
-learns to refresh OAuth tokens itself, it must write the refreshed token back to
-Mainroom through an authenticated callback, and Mainroom must update the S3/R2
-object plus desired config revision.
+process should read auth JSON through temporary signed URLs at startup and
+reload. If tokenproxy later learns to refresh OAuth tokens itself, it must write
+the refreshed token back to Mainroom through an authenticated callback, and
+Mainroom must update the S3/R2 object plus desired config revision.
 
 For the first version, keep OAuth refresh outside remote tokenproxy and make the
-local `mainroom sync --watch` responsible for pushing refreshed local files.
+local `mainroom sync` responsible for pushing refreshed local files when the user
+runs it.
 
 ### Upload object strategy
 
@@ -923,6 +938,9 @@ reloaded.
   tokenproxy receives the request.
 - Mainroom should log grant IDs and hashed account IDs, not raw bearer tokens.
 - The upload route should continue rejecting non-JSON and over-large JSON files.
+- Mainroom should keep S3/R2 signing credentials in the control plane. The
+  tokenproxy process should receive only temporary signed read URLs, not S3
+  access keys or R2 credentials.
 - Mainroom should never send B's upstream OAuth, API key, or internal
   `TOKENPROXY_CLIENT_KEY` to A.
 - If Mainroom later adds peer assertions, they should be scoped,
@@ -941,8 +959,8 @@ reloaded.
 | B's tokenproxy is unhealthy                                | A's tokenproxy records peer health and cools it down like any other account.                            |
 | Peer grant cap is exhausted                                | B's edge returns `429`; A's tokenproxy marks the peer usage-limited if headers/body expose reset data.  |
 | `previous_response_id` routes to the wrong peer            | tokenproxy must pin response chains to the original account and reject or replay rather than fail over. |
-| S3/R2 object changed but running tokenproxy did not reload | Mainroom detects revision/hash mismatch via admin status and reconciles.                                |
-| Container restarts after sleep                             | It reads the durable current config from S3/R2 and reports the current revision.                        |
+| S3/R2 object changed but running tokenproxy did not reload | Mainroom detects revision/hash mismatch via admin status, mints fresh signed URLs, and reconciles.      |
+| Container restarts after sleep                             | Mainroom mints a signed config URL; tokenproxy reads it and reports the current revision.               |
 
 ## CLI behavior
 
@@ -967,18 +985,6 @@ Routes:
   /v1/responses          ready
   /v1/chat/completions   needs OpenAI API key or peer
   /v1/messages           needs Anthropic key or peer
-```
-
-`mainroom sync --watch` should run until interrupted:
-
-```text
-Watching:
-  ~/.codex/auth.json
-  ~/.cli-proxy-api/*.json
-
-2026-06-21T10:15:22Z changed ~/.codex/auth.json
-2026-06-21T10:15:23Z uploaded sha256=...
-2026-06-21T10:15:24Z reloaded victor.mainroom.sh rev 43 -> 44
 ```
 
 ## API additions
@@ -1021,26 +1027,23 @@ shutdown endpoint, so shutdown is not required for the first implementation.
 ## Implementation order
 
 1. Mainroom spec and data model.
-2. tokenproxy S3 top-level config support.
-3. tokenproxy `mainroom_peer` account kind.
-4. tokenproxy admin config status and reload.
-5. Mainroom rendered config objects and desired machine state.
-6. Mainroom subdomain `/v1/*` routing.
-7. `mainroom sync` high-level command.
-8. Provider grant and consumer trust APIs.
-9. Provider-side edge enforcement and cap counters.
-10. `mainroom sync --watch`.
+2. Mainroom rendered config objects and desired machine state.
+3. Mainroom subdomain `/v1/*` routing.
+4. `mainroom sync` high-level command.
+5. Provider grant and consumer trust APIs.
+6. Provider-side edge enforcement and cap counters.
 
-This order lets the repo ship useful value early. S3 config support and
-subdomain routing make `victor.mainroom.sh/v1/responses` real before friend
-sharing is complete.
+This order lets Mainroom ship useful value early now that tokenproxy has signed
+HTTPS config loading, `mainroom_peer`, and admin reload support. Subdomain
+routing and desired-state sync make `victor.mainroom.sh/v1/responses` real
+before friend sharing is complete.
 
 Tracking issues:
 
 - Mainroom peer sharing and provider-edge enforcement:
   <https://github.com/cs50victor/mainroom/issues/12>.
-- tokenproxy S3 config, live reload, and `mainroom_peer` data-plane support:
-  <https://github.com/cs50victor/tokenproxy/issues/26>.
+- tokenproxy signed URL remote reads:
+  <https://github.com/cs50victor/tokenproxy/pull/31>.
 
 ## Tiny experiments run for this spec
 
@@ -1068,17 +1071,27 @@ Upload unexpired local Codex auth JSON files.
 Conclusion: the current CLI UX confirms that sync is upload-only and should be
 expanded into desired-state reconciliation.
 
-### tokenproxy admin route search
+### tokenproxy recent federation commits
 
 Command:
 
 ```text
-git -C ../tokenproxy grep -n "reload\\|admin\\|config/status\\|config/reload" upstream/main -- src
+git -C ../tokenproxy log --oneline --decorate -5
+git -C ../tokenproxy grep -n "mainroom_peer\\|config/status\\|config/reload\\|config_url\\|read_remote_url" HEAD -- src
 ```
 
-Observed: no matches.
+Observed:
 
-Conclusion: live config reload is a new tokenproxy feature.
+```text
+eb3d450 feat: replace s3 remote reads with signed urls (#31)
+896fcd5 chore: release v0.1.13
+a1ce344 feat: add Mainroom federation support (#28)
+eb8e8bd refactor: nest server proxy under state (#29)
+```
+
+Conclusion: tokenproxy already has the federation data-plane primitives this
+spec needs, including signed HTTP URL remote object reads in `v0.1.14`. The
+remaining work is Mainroom control-plane integration and edge policy.
 
 ### config drift state machine
 
@@ -1128,8 +1141,7 @@ Observed:
 { "local": "514082e09725", "s3": "8c29d2b6463b", "shouldUpload": true }
 ```
 
-Conclusion: content hash is the right stale detector. File mtime is only a
-watch trigger.
+Conclusion: content hash is the right stale detector.
 
 ### MCP registry and search surfaces
 
