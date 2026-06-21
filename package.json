@@ -25,6 +25,7 @@
     "commander": "^15.0.0",
     "hono": "^4.12.25",
     "hono-zod-openapi": "^1.1.1",
+    "oauth4webapi": "^3.8.6",
     "zod": "^4.4.3"
   },
   "devDependencies": {
