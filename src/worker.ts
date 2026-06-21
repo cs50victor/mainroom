@@ -485,6 +485,13 @@ function r2Endpoint(accountId: string | undefined): string | undefined {
 
 export default {
   async fetch(request, env) {
+    /*
+     * USE WORKERS FOR PUBLIC CONTROL-PLANE ROUTES, NOT CONTAINERS.
+     *
+     * CONTAINERS CAN STAY WARM ACROSS DEPLOYS, SO NEW ENV VARS OR ROUTES MAY
+     * NOT BE AVAILABLE IMMEDIATELY. KEEP LOGIN, OAUTH, HEALTH, AND OTHER
+     * DEPLOYMENT-SENSITIVE ENTRYPOINTS IN THE WORKER BEFORE THIS FALLTHROUGH.
+     */
     const cliResponse = await cliAuthRequest(request, env);
     if (cliResponse) return cliResponse;
 
