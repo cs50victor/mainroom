@@ -2,11 +2,17 @@
 
 import { Command } from "commander";
 import { authStatus, login, logout, ping } from "./auth";
+import { syncCodex } from "./codex";
 import { errorMessage } from "./errors";
-import { defaultApiUrl, type AuthCommandOptions } from "./types";
+import {
+  defaultApiUrl,
+  type AuthCommandOptions,
+  type CodexSyncOptions,
+} from "./types";
 
 const program = new Command();
 const authCommand = new Command("auth");
+const codexCommand = new Command("codex");
 const version = "0.1.0";
 
 program
@@ -20,6 +26,7 @@ program
 Examples:
   $ mainroom auth signup
   $ mainroom auth login
+  $ mainroom codex sync
   $ mainroom auth status
   $ mainroom ping`,
   );
@@ -71,6 +78,16 @@ authCommand
   .action(() => runCommand(authStatus));
 
 program.addCommand(authCommand);
+
+codexCommand.description("Upload Codex auth files.").showHelpAfterError();
+
+codexCommand
+  .command("sync")
+  .description("Upload unexpired local Codex auth JSON files.")
+  .option("--yes", "Upload every eligible auth file without prompting")
+  .action((options: CodexSyncOptions) => runCommand(() => syncCodex(options)));
+
+program.addCommand(codexCommand);
 
 program
   .command("ping")

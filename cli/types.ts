@@ -5,6 +5,10 @@ export type AuthCommandOptions = {
   withToken?: boolean;
 };
 
+export type CodexSyncOptions = {
+  yes?: boolean;
+};
+
 export type AuthMode = "login" | "signup";
 
 export type Credentials = {

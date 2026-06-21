@@ -3,6 +3,8 @@ import { errorMessage } from "./errors";
 import type { CliOAuthConfig } from "./types";
 
 type RequestOptions = {
+  body?: BodyInit;
+  contentType?: string;
   method?: "GET" | "POST";
   token?: string;
 };
@@ -28,6 +30,12 @@ const cliExchangeResponseSchema = z.object({
     subject: z.string(),
     secret: z.string(),
   }),
+});
+
+const jsonUploadResponseSchema = z.object({
+  bucket: z.string(),
+  key: z.string(),
+  size: z.number(),
 });
 
 type RequestResult<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -71,6 +79,19 @@ export async function mintCliApiKey(
   return result.data.apiKey;
 }
 
+export async function uploadJson(
+  apiUrl: string,
+  token: string,
+  text: string,
+): Promise<RequestResult<z.infer<typeof jsonUploadResponseSchema>>> {
+  return requestJson(apiUrl, "/v0/uploads/json", jsonUploadResponseSchema, {
+    body: text,
+    contentType: "application/json; charset=utf-8",
+    method: "POST",
+    token,
+  });
+}
+
 async function requestJson<T>(
   apiUrl: string,
   path: string,
@@ -78,11 +99,14 @@ async function requestJson<T>(
   options: RequestOptions = {},
 ): Promise<RequestResult<T>> {
   try {
+    const headers = new Headers();
+    if (options.contentType) headers.set("Content-Type", options.contentType);
+    if (options.token) headers.set("Authorization", `Bearer ${options.token}`);
+
     const response = await fetch(new URL(path, `${apiUrl}/`), {
+      body: options.body,
       method: options.method ?? "GET",
-      headers: options.token
-        ? { Authorization: `Bearer ${options.token}` }
-        : undefined,
+      headers,
     });
     const body = await response.json().catch(() => undefined);
 
