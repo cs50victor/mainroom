@@ -4,10 +4,12 @@ import {
   ClerkApiError,
   createCliApiKey,
   getApiKeySecret,
+  isCliUsernameTaken,
   readConfig,
 } from "./helpers";
 import { apiKeySchema } from "./schemas/api-keys";
 
+const rootHost = "mainroom.sh";
 const instanceCount = 3;
 const machinePath = "/v0/machines";
 const tokenproxyEntrypoint = [
@@ -313,6 +315,39 @@ async function cliAuthRequest(
   return json({ error: "Method not allowed" }, 405);
 }
 
+async function usernameStatusRequest(
+  request: Request,
+  env: Env,
+): Promise<Response | undefined> {
+  const url = new URL(request.url);
+
+  if (url.pathname !== "/") return undefined;
+  const username = usernameFromMainroomHost(url.hostname);
+  if (!username) return undefined;
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return json({ error: "Method not allowed" }, 405);
+  }
+
+  const taken = await isCliUsernameTaken(workerAppConfig(env), username);
+  const status = taken ? "taken" : "available";
+
+  if (request.headers.get("Accept")?.includes("application/json")) {
+    return json({ username, status, available: !taken });
+  }
+
+  return text(usernameStatusText(username, status));
+}
+
+function usernameFromMainroomHost(hostname: string): string | undefined {
+  const suffix = `.${rootHost}`;
+  if (!hostname.endsWith(suffix)) return undefined;
+
+  const username = hostname.slice(0, -1 * suffix.length);
+  if (!username || username.includes(".")) return undefined;
+
+  return username;
+}
+
 function cliAuthError(error: unknown): {
   error: string;
   status: 400 | 401 | 409 | 502;
@@ -471,6 +506,24 @@ function json(body: unknown, status = 200): Response {
   return Response.json(body, { status });
 }
 
+function text(body: string, status = 200): Response {
+  return new Response(body, {
+    status,
+    headers: {
+      "content-type": "text/plain; charset=utf-8",
+    },
+  });
+}
+
+function usernameStatusText(username: string, status: "available" | "taken") {
+  const detail =
+    status === "available"
+      ? "This Mainroom username is available."
+      : "This Mainroom username is already taken.";
+
+  return `${username}.mainroom.sh is ${status}\n${detail}\n`;
+}
+
 function r2Endpoint(accountId: string | undefined): string | undefined {
   return accountId
     ? `https://${accountId}.r2.cloudflarestorage.com`
@@ -488,6 +541,9 @@ export default {
      */
     const cliResponse = await cliAuthRequest(request, env);
     if (cliResponse) return cliResponse;
+
+    const usernameStatusResponse = await usernameStatusRequest(request, env);
+    if (usernameStatusResponse) return usernameStatusResponse;
 
     const machineResponse = await machineRequest(request, env);
     if (machineResponse) return machineResponse;

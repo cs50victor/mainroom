@@ -341,6 +341,21 @@ function cliUsernameError(username: string): string | undefined {
   return undefined;
 }
 
+export async function isCliUsernameTaken(
+  config: AppConfig,
+  username: string,
+): Promise<boolean> {
+  const error = cliUsernameError(username);
+  if (error) return true;
+  if (config.authMode === "mock") return false;
+
+  const users = await clerkApi(config, (client) =>
+    client.users.getUserList({ username: [username], limit: 1 }),
+  );
+
+  return users.data.length > 0;
+}
+
 async function clerkApi<T>(
   config: AppConfig,
   callback: (client: ClerkClient) => Promise<T>,
