@@ -38,12 +38,19 @@ The design is deliberately split:
 - `startMachine` gets the user's API key secret, passes S3/R2 environment
   variables, injects `TOKENPROXY_CLIENT_KEY`, and runs the tokenproxy entrypoint.
   Source: [`src/worker.ts`](../src/worker.ts#L150-L171).
+- Mainroom API keys can be fetched, verified, and revoked through the current
+  Clerk-backed helper path. The first federation design should reuse that
+  existing consumer identity check instead of adding a second token issuer.
+  Source: [`src/helpers.ts`](../src/helpers.ts#L201-L248).
 - The machine control API creates deterministic per-subject machines by calling
   `getContainer(env.USER_MACHINE_CONTAINER, id)` where `id = user:${subject}`.
   Source: [`src/worker.ts`](../src/worker.ts#L211-L235) and
   [`src/worker.ts`](../src/worker.ts#L395-L397).
 - Mainroom already forwards host metadata with `x-forwarded-host`,
   `x-forwarded-proto`, and `x-mainroom-host`.
+  Source: [`src/worker.ts`](../src/worker.ts#L175-L192).
+- `proxiedRequest()` preserves the incoming `Authorization` header when it
+  constructs the request sent to the container.
   Source: [`src/worker.ts`](../src/worker.ts#L175-L192).
 - Mainroom currently only checks subdomain username availability on `/`; it does
   not yet route `victor.mainroom.sh/v1/*` to the user's tokenproxy machine.
@@ -137,6 +144,31 @@ These citations point at tokenproxy `upstream/main` commit
   [`src/server/proxy.rs`](https://github.com/cs50victor/tokenproxy/blob/9a9e3a266a246528130e1dbce2e19a7cdeb42e55/src/server/proxy.rs#L3200-L3264).
 
 ### Platform and API facts
+
+- Cloudflare describes a binding as "a permission and an API in one piece" where
+  the underlying secret is not exposed to Worker code. This supports keeping
+  platform credentials in the control plane rather than rendering new per-peer
+  secrets into tokenproxy containers.
+  Source: <https://developers.cloudflare.com/workers/runtime-apis/bindings/>.
+- Cloudflare Service Bindings allow Worker-to-Worker calls without a public URL
+  and are commonly used for shared internal services and public-internet
+  isolation. This is useful future context for splitting a Mainroom auth helper
+  out of the public Worker, but it is not required for the first peer-sharing
+  design.
+  Source:
+  <https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/>.
+- OAuth 2.0 Token Exchange defines a Security Token Service pattern for
+  exchanging one valid token for another token scoped to a downstream resource.
+  It is the right future pattern if Mainroom later needs narrower, short-lived
+  peer assertions, but the first design can get the same authorization boundary
+  by validating the existing caller bearer at B's Mainroom edge.
+  Source: <https://datatracker.ietf.org/doc/html/rfc8693>.
+- API gateway token-exchange guidance places identity translation and
+  downscoping at the gateway so backend services do not each solve identity
+  complexity. Mainroom's Worker is already the gateway in front of every
+  `*.mainroom.sh` machine, so B's edge should remain the hard policy
+  enforcement point.
+  Source: <https://konghq.com/blog/engineering/token-exchange-at-the-gateway>.
 
 - Cloudflare Container classes extend Durable Objects; the Durable Object owns
   routing, lifecycle, and persistent storage, while the container filesystem is
@@ -235,10 +267,9 @@ When user A consumes user B's shared tokens:
 
    ```toml
    [[accounts]]
-   id = "peer:userb:<grant-id>"
+   id = "peer:userb"
    kind = "mainroom_peer"
    base_url = "https://userb.mainroom.sh/v1"
-   token_env = "MAINROOM_PEER_TOKEN_USERB_<grant-id>"
    priority = 50
    models = ["gpt-5.1", "o3"]
    supports_chat_completions = true
@@ -251,16 +282,18 @@ When user A consumes user B's shared tokens:
 
 4. A's tokenproxy treats that peer like any other account during selection.
 5. If A's tokenproxy selects B, it forwards the request to
-   `https://userb.mainroom.sh/v1/...` with a Mainroom peer token, not B's
-   internal tokenproxy key.
-6. B's Mainroom edge validates the peer token, checks the grant, enforces hard
-   caps, strips the peer token, injects B's internal tokenproxy bearer, and
-   forwards to B's user machine.
+   `https://userb.mainroom.sh/v1/...` with the original Mainroom caller bearer.
+   This bearer identifies consumer A. The host identifies provider B.
+6. B's Mainroom edge verifies the caller bearer through the existing API-key
+   path, checks the active provider grant from A to B, enforces hard caps, strips
+   A's bearer, injects B's internal tokenproxy bearer, and forwards to B's user
+   machine.
 7. B's tokenproxy spends B's configured upstream account and returns the result.
 8. B's edge records final usage against the grant. A's tokenproxy also records
    local usage and health for routing decisions.
 
-This keeps selection local to A and enforcement local to B's control plane.
+This keeps selection local to A and enforcement local to B's control plane. The
+peer account config is routing metadata, not an authorization record.
 
 ## Sharing model
 
@@ -300,43 +333,50 @@ The provider grant is the hard authorization record. The consumer trust record
 is a routing preference. Removing either record removes the peer account from
 A's next rendered config.
 
-## Peer token format
+## Peer authorization model
 
-Peer tokens should be Mainroom-signed JWTs or PASETO-style bearer tokens. The
-important fields are:
+The first implementation should not mint or render per-peer bearer tokens such
+as `MAINROOM_PEER_TOKEN_USERB_GRANT_01J`. Those variables would require one
+container environment entry per active peer grant and would make a dynamic
+control-plane object look like process-startup state. That is the wrong
+operational boundary for friend sharing.
 
-```json
-{
-  "iss": "https://mainroom.sh",
-  "aud": "mainroom-peer:userB",
-  "sub": "userA",
-  "grant_id": "grant_01j...",
-  "grant_revision": 12,
-  "jti": "peer_call_01j...",
-  "exp": 1782000000,
-  "scope": {
-    "endpoints": ["responses", "chat_completions"],
-    "models": ["gpt-5.1"],
-    "stream": true,
-    "websocket": false
-  }
-}
-```
+Use the existing Mainroom caller bearer as the consumer proof:
+
+1. `userb.mainroom.sh` identifies the provider subject from the host.
+2. The `Authorization: Bearer ...` header identifies the consumer subject after
+   Mainroom verifies it through the existing API-key path.
+3. B's Mainroom edge resolves the single active grant for
+   `(provider_subject, verified_consumer_subject)`.
+4. Mainroom storage enforces at most one active grant per
+   `(provider_subject, consumer_subject)`, so tokenproxy does not need to pass a
+   grant selector.
+5. B's edge checks grant status, path scope, model scope, streaming/WebSocket
+   scope, and remaining request/token budget.
+6. B's edge strips A's caller bearer before the request reaches B's tokenproxy.
+7. B's edge injects B's internal `TOKENPROXY_CLIENT_KEY` only on the private hop
+   to B's user machine.
 
 The provider-side Mainroom edge validates:
 
-1. Signature against Mainroom's active JWKS.
-2. `iss`.
-3. `aud` matches the provider subdomain.
-4. `sub` matches the consumer.
-5. `grant_id` exists, is active, and has the same or newer revision rules.
-6. Request path is allowed by `scope.endpoints`.
-7. Request body model is allowed by `scope.models`.
-8. Streaming and WebSocket mode are allowed.
-9. The daily request and token caps still have budget.
+1. The caller bearer is a valid non-revoked Mainroom API key.
+2. The provider subject derived from the host exists and maps to a user machine.
+3. For non-owner callers, exactly one active grant exists for
+   `(provider_subject, caller_subject)`.
+4. The resolved grant's `consumer_subject` and `provider_subject` match the
+   verified caller and host-derived provider.
+5. Request path is allowed by `scopes.endpoints`.
+6. Request body model is allowed by `scopes.models`.
+7. Streaming and WebSocket mode are allowed.
+8. The daily request and token caps still have budget.
 
 The provider-side edge should reject with `403` for revoked or disallowed
 scope, and `429` for exhausted grant caps.
+
+If Mainroom later needs narrower peer credentials than the caller API key, add a
+small Mainroom token-exchange endpoint that returns short-lived
+audience-scoped peer assertions. That would follow the RFC 8693 STS pattern, but
+it should be a later hardening step rather than a first-version dependency.
 
 ## Config source of truth
 
@@ -357,7 +397,6 @@ uploads/json/<encoded-subject>/<auth-upload-name>.json
 tokenproxy/users/<encoded-subject>/configs/rev-00000042.toml
 tokenproxy/users/<encoded-subject>/configs/current.toml
 tokenproxy/users/<encoded-subject>/configs/current.json
-tokenproxy/users/<encoded-subject>/peer-tokens/rev-00000042.json.enc
 ```
 
 `current.json` should be a small pointer:
@@ -414,21 +453,32 @@ enum AccountKind {
 
 `MainroomPeer` should:
 
-- Read its bearer token from `token_env`, like API-key accounts.
 - Use `base_url` as an OpenAI-compatible upstream root.
 - Support any subset of `/v1/chat/completions`, `/v1/responses`,
   `/v1/responses` WebSocket, `/v1/responses/compact`, and `/v1/messages`
   according to config.
-- Forward with `Authorization: Bearer <peer token>`.
-- Add identifying headers that do not include secrets:
-  `x-mainroom-peer-grant-id`, `x-mainroom-peer-consumer`, and
-  `x-mainroom-peer-source-machine`.
+- Forward with the original downstream `Authorization` bearer so the provider
+  Mainroom edge can verify the consumer subject and grant. It must not forward
+  A's internal tokenproxy bearer to B's tokenproxy; B's edge strips the consumer
+  bearer and injects B's internal bearer on the private machine hop.
+- Not require `token_env`, `mainroom_peer_grant_id`,
+  `mainroom_peer_provider`, or `mainroom_peer_consumer`; those are Mainroom
+  control-plane facts, not tokenproxy routing facts.
+- Avoid sending caller-controlled `x-mainroom-peer-*` headers. If Mainroom wants
+  resolved grant or consumer metadata for logs, B's edge should add those
+  headers after it verifies the caller and resolves the grant.
 - Avoid sending OpenAI-specific beta or organization headers unless the existing
   upstream header policy allows them.
 
 This is smaller than building a separate friend load balancer because the
 selector already filters by endpoint, model, service tier, health, WebSocket
 support, and pinned account.
+
+It is also smaller than a first-version token-exchange service. The host already
+names provider B, Mainroom already has the consumer API-key verification path,
+and B's edge already sits in front of B's tokenproxy machine. A short-lived
+Mainroom peer assertion can be added later if the existing caller bearer becomes
+too broad for the threat model.
 
 ### 3. Live config status and reload
 
@@ -513,8 +563,9 @@ when any of these change:
 - TLS/root CA/base system package changes.
 - a failed config reload that leaves the process healthy on the old revision.
 
-For simple account list, auth JSON, model allowlist, peer grant, and priority
-changes, live reload should be enough.
+For simple account list, auth JSON, model allowlist, peer grant metadata, and
+priority changes, live reload should be enough. Peer grant changes must not
+require adding per-peer environment variables to the container.
 
 ## Required Mainroom changes
 
@@ -837,8 +888,12 @@ Suggested hard-cap flow:
 Counters should be keyed by:
 
 ```text
-grant_id + provider_subject + consumer_subject + yyyy-mm-dd
+grant_id + yyyy-mm-dd
 ```
+
+`grant_id` is an internal Mainroom primary key after B's edge resolves the active
+grant. It is not rendered into A's tokenproxy config and is not accepted from
+tokenproxy as an authorization selector.
 
 ## Revocation
 
@@ -848,7 +903,7 @@ enforcement edge.
 When B revokes A's grant:
 
 1. Mainroom marks the grant revoked in durable storage.
-2. B's edge rejects future peer-token calls with `403`.
+2. B's edge rejects future peer calls from A with `403`.
 3. Mainroom increments A's desired config revision so A's tokenproxy removes the
    peer account on reload.
 4. Existing in-flight HTTP streams can finish, unless B selects "close active
@@ -863,16 +918,16 @@ reloaded.
 
 - The user's own tokenproxy downstream bearer stays private to that user's
   machine and Mainroom edge.
-- Peer tokens are scoped, audience-bound, short-lived, revocable, and useless
-  outside the provider's Mainroom subdomain.
+- The consumer's Mainroom caller bearer may reach the provider's Mainroom edge
+  for peer authorization, but it must be stripped before the provider's
+  tokenproxy receives the request.
 - Mainroom should log grant IDs and hashed account IDs, not raw bearer tokens.
 - The upload route should continue rejecting non-JSON and over-large JSON files.
 - Mainroom should never send B's upstream OAuth, API key, or internal
   `TOKENPROXY_CLIENT_KEY` to A.
-- A peer account's token is not an OpenAI token. It is a Mainroom authorization
-  token consumed by B's Mainroom edge.
-- Mainroom should include key rotation in JWKS. Peer tokens should be short
-  enough that ordinary rotation does not require mass revocation.
+- If Mainroom later adds peer assertions, they should be scoped,
+  audience-bound, short-lived, revocable, and useless outside the provider's
+  Mainroom subdomain.
 
 ## Failure modes
 
@@ -979,6 +1034,13 @@ shutdown endpoint, so shutdown is not required for the first implementation.
 This order lets the repo ship useful value early. S3 config support and
 subdomain routing make `victor.mainroom.sh/v1/responses` real before friend
 sharing is complete.
+
+Tracking issues:
+
+- Mainroom peer sharing and provider-edge enforcement:
+  <https://github.com/cs50victor/mainroom/issues/12>.
+- tokenproxy S3 config, live reload, and `mainroom_peer` data-plane support:
+  <https://github.com/cs50victor/tokenproxy/issues/26>.
 
 ## Tiny experiments run for this spec
 
