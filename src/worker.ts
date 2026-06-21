@@ -26,6 +26,9 @@ type Env = {
   AWS_SESSION_TOKEN?: string;
   CLERK_API_URL?: string;
   CLERK_API_VERSION?: string;
+  CLERK_OAUTH_AUTHORIZE_URL?: string;
+  CLERK_OAUTH_CLIENT_ID?: string;
+  CLERK_OAUTH_TOKEN_URL?: string;
   CLERK_SECRET_KEY: string;
   CORS_ORIGIN?: string;
   MACHINE_CONTROL_TOKEN: string;
@@ -59,6 +62,9 @@ export class MainroomContainer extends Container<Env> {
         "AUTH_MODE",
         "CLERK_API_URL",
         "CLERK_API_VERSION",
+        "CLERK_OAUTH_AUTHORIZE_URL",
+        "CLERK_OAUTH_CLIENT_ID",
+        "CLERK_OAUTH_TOKEN_URL",
       ]),
       CLERK_SECRET_KEY: env.CLERK_SECRET_KEY,
       CORS_ORIGIN: env.CORS_ORIGIN ?? "https://mainroom.sh",
@@ -274,6 +280,9 @@ function workerAppConfig(env: Env) {
     AUTH_MODE: env.AUTH_MODE,
     CLERK_API_URL: env.CLERK_API_URL,
     CLERK_API_VERSION: env.CLERK_API_VERSION,
+    CLERK_OAUTH_AUTHORIZE_URL: env.CLERK_OAUTH_AUTHORIZE_URL,
+    CLERK_OAUTH_CLIENT_ID: env.CLERK_OAUTH_CLIENT_ID,
+    CLERK_OAUTH_TOKEN_URL: env.CLERK_OAUTH_TOKEN_URL,
     CLERK_SECRET_KEY: env.CLERK_SECRET_KEY,
     CORS_ORIGIN: env.CORS_ORIGIN,
     NODE_ENV: "production",
