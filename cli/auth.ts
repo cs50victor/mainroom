@@ -106,6 +106,11 @@ async function loginWithOAuth(
   apiUrl: string,
   command: AuthMode,
 ): Promise<number> {
+  if (await isLoggedIn(apiUrl)) {
+    console.log(`Already logged in to ${apiUrl}`);
+    return 0;
+  }
+
   const config = await fetchCliOAuthConfig(apiUrl);
   if (!config.ok) {
     console.error(config.error);
@@ -147,6 +152,15 @@ async function loginWithOAuth(
     );
   }
   return 0;
+}
+
+async function isLoggedIn(apiUrl: string): Promise<boolean> {
+  const credentials = await readCredentials();
+  if (!credentials || normalizeApiUrl(credentials.apiUrl) !== apiUrl) {
+    return false;
+  }
+
+  return (await verifyApiKey(credentials.apiUrl, credentials.token)).ok;
 }
 
 async function promptForUsername(): Promise<string> {
