@@ -1,14 +1,7 @@
 import { Hono } from "hono";
 
-import {
-  authenticateOAuthToken,
-  ClerkApiError,
-  createApiKey,
-  type AppConfig,
-} from "../helpers";
+import { ClerkApiError, createCliApiKey, type AppConfig } from "../helpers";
 import { apiKeySchema } from "../schemas/api-keys";
-
-const cliApiKeyName = "Mainroom CLI";
 
 export function createCliAuthRoute(config: AppConfig): Hono {
   const cliAuth = new Hono();
@@ -27,15 +20,9 @@ export function createCliAuthRoute(config: AppConfig): Hono {
 
   cliAuth.post("/exchange", async (c) => {
     try {
-      const { userId } = await authenticateOAuthToken(config, c.req.raw);
-      const apiKey = apiKeySchema.parse(
-        await createApiKey(config, {
-          name: cliApiKeyName,
-          subject: userId,
-          description: "Created by Mainroom CLI",
-          createdBy: userId,
-        }),
-      );
+      const body = await readOptionalJson(c.req.raw.clone());
+      const result = await createCliApiKey(config, c.req.raw, body.username);
+      const apiKey = apiKeySchema.parse(result.apiKey);
 
       if (!apiKey.secret) {
         return c.json(
@@ -50,6 +37,7 @@ export function createCliAuthRoute(config: AppConfig): Hono {
           subject: apiKey.subject,
           secret: apiKey.secret,
         },
+        username: result.username,
       });
     } catch (error) {
       const response = authError(error);
@@ -58,6 +46,19 @@ export function createCliAuthRoute(config: AppConfig): Hono {
   });
 
   return cliAuth;
+}
+
+async function readOptionalJson(
+  request: Request,
+): Promise<Record<string, unknown>> {
+  try {
+    const body = await request.json();
+    return body && typeof body === "object" && !Array.isArray(body)
+      ? (body as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 function cliOAuthConfig(config: AppConfig):
@@ -84,10 +85,11 @@ function cliOAuthConfig(config: AppConfig):
 
 function authError(error: unknown): {
   error: string;
-  status: 400 | 401 | 502;
+  status: 400 | 401 | 409 | 502;
 } {
   if (error instanceof ClerkApiError) {
     if (error.status === 401) return { error: "Login failed", status: 401 };
+    if (error.status === 409) return { error: error.message, status: 409 };
     if (error.status >= 400 && error.status < 500) {
       return { error: error.message, status: 400 };
     }

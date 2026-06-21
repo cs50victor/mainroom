@@ -8,6 +8,7 @@ import { z } from "zod";
 
 import { readConfig } from "./helpers";
 import { createV0Route } from "./routes/v0";
+import { mainroomVersion } from "./version";
 
 const config = readConfig(Bun.env);
 
@@ -52,7 +53,7 @@ const openApiDocument = createOpenApiDocument(
   {
     info: {
       title: "Mainroom API",
-      version: "0.1.0",
+      version: mainroomVersion,
     },
     components: {
       securitySchemes: {

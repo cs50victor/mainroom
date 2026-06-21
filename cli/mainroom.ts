@@ -9,16 +9,16 @@ import {
   type AuthCommandOptions,
   type CodexSyncOptions,
 } from "./types";
+import { mainroomVersion } from "../src/version";
 
 const program = new Command();
 const authCommand = new Command("auth");
 const codexCommand = new Command("codex");
-const version = "0.1.0";
 
 program
   .name("mainroom")
   .description("Use Mainroom from the command line.")
-  .version(version, "-v, --version", "Show version")
+  .version(mainroomVersion, "-v, --version", "Show version")
   .showHelpAfterError()
   .addHelpText(
     "after",

@@ -1,3 +1,4 @@
+import { input } from "@inquirer/prompts";
 import {
   fetchCliOAuthConfig,
   mintCliApiKey,
@@ -114,6 +115,7 @@ async function loginWithOAuth(
     return 1;
   }
 
+  const username = command === "signup" ? await promptForUsername() : undefined;
   const session = await createOAuthSession(config.data);
 
   console.log(`Opening browser: ${session.authorizeUrl}`);
@@ -130,14 +132,29 @@ async function loginWithOAuth(
     state: session.state,
     verifier: session.verifier,
   });
-  const apiKey = await mintCliApiKey(apiUrl, accessToken);
+  const result = await mintCliApiKey(apiUrl, accessToken, { username });
 
   await writeCredentials({
     apiUrl,
-    keyId: apiKey.id,
-    token: apiKey.secret,
+    keyId: result.apiKey.id,
+    token: result.apiKey.secret,
     updatedAt: new Date().toISOString(),
   });
   console.log(`Logged in to ${apiUrl}`);
+  if (command === "signup" && result.username) {
+    console.log(
+      `${result.username}.mainroom.sh will be ready to use after you run \`mainroom codex sync\`.`,
+    );
+  }
   return 0;
+}
+
+async function promptForUsername(): Promise<string> {
+  return input({
+    message: "Choose a Mainroom username",
+    required: true,
+    validate(value) {
+      return value.trim().length > 0 || "Username is required";
+    },
+  }).then((value) => value.trim());
 }

@@ -5,6 +5,7 @@ import {
 } from "@clerk/backend";
 import { isClerkAPIResponseError } from "@clerk/backend/errors";
 
+import { mainroomUserAgent } from "./version";
 import type {
   CreateApiKeyParams,
   ListApiKeysParams,
@@ -38,6 +39,13 @@ type Mutable<T> = {
 type MockApiKey = Mutable<APIKey> & {
   secret: string;
 };
+
+const reservedCliUsernames = new Set([
+  "accounts",
+  "cli-bin-releases",
+  "clerk",
+  "clkmail",
+]);
 
 const mockApiKeys = new Map<string, MockApiKey>();
 
@@ -249,7 +257,7 @@ export async function authenticateOAuthToken(
     secretKey: config.clerkSecretKey,
     apiUrl: config.clerkApiUrl,
     apiVersion: config.clerkApiVersion,
-    userAgent: "mainroom/0.1.0",
+    userAgent: mainroomUserAgent,
     telemetry: { disabled: true },
   });
   const state = await client.authenticateRequest(request, {
@@ -268,6 +276,87 @@ export async function authenticateOAuthToken(
   return { userId: auth.userId };
 }
 
+export async function createCliApiKey(
+  config: AppConfig,
+  request: Request,
+  username: unknown,
+): Promise<{ apiKey: APIKey; username?: string }> {
+  const { userId } = await authenticateOAuthToken(config, request);
+  const verifiedUsername =
+    typeof username === "string"
+      ? await verifyCliSignupUsername(config, userId, username)
+      : undefined;
+
+  return {
+    apiKey: await createApiKey(config, {
+      name: "Mainroom CLI",
+      subject: userId,
+      description: "Created by Mainroom CLI",
+      createdBy: userId,
+    }),
+    username: verifiedUsername,
+  };
+}
+
+async function verifyCliSignupUsername(
+  config: AppConfig,
+  userId: string,
+  value: string,
+): Promise<string> {
+  const username = value.trim();
+  const error = cliUsernameError(username);
+  if (error) throw new ClerkApiError(400, error, undefined);
+
+  if (config.authMode === "mock") return username;
+
+  const user = await clerkApi(config, (client) => client.users.getUser(userId));
+  if (user.username === username) return username;
+  if (user.username) {
+    throw new ClerkApiError(
+      409,
+      `Clerk user already has username ${user.username}`,
+      undefined,
+    );
+  }
+
+  // NOTE(clerk): updateUser enforces username syntax and instance-wide uniqueness.
+  // https://github.com/clerk/clerk-docs/blob/main/docs/reference/backend/user/update-user.mdx
+  await clerkApi(config, (client) =>
+    client.users.updateUser(userId, { username }),
+  );
+
+  return username;
+}
+
+function cliUsernameError(username: string): string | undefined {
+  // NOTE(mainroom): keep only subdomain reservations here; Clerk owns username rules.
+  // https://github.com/clerk/clerk-docs/blob/main/docs/reference/backend/user/update-user.mdx
+  if (!username) return "Username is required";
+  if (username.includes("domainkey")) {
+    return "Username cannot contain domainkey";
+  }
+  if (reservedCliUsernames.has(username)) {
+    return `${username}.mainroom.sh is already reserved`;
+  }
+
+  return undefined;
+}
+
+export async function isCliUsernameTaken(
+  config: AppConfig,
+  username: string,
+): Promise<boolean> {
+  const error = cliUsernameError(username);
+  if (error) return true;
+  if (config.authMode === "mock") return false;
+
+  const users = await clerkApi(config, (client) =>
+    client.users.getUserList({ username: [username], limit: 1 }),
+  );
+
+  return users.data.length > 0;
+}
+
 async function clerkApi<T>(
   config: AppConfig,
   callback: (client: ClerkClient) => Promise<T>,
@@ -280,7 +369,7 @@ async function clerkApi<T>(
     secretKey: config.clerkSecretKey,
     apiUrl: config.clerkApiUrl,
     apiVersion: config.clerkApiVersion,
-    userAgent: "mainroom/0.1.0",
+    userAgent: mainroomUserAgent,
     telemetry: { disabled: true },
   });
 
