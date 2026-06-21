@@ -7,6 +7,7 @@ type RequestOptions = {
   contentType?: string;
   method?: "GET" | "POST";
   token?: string;
+  uploadName?: string;
 };
 
 const errorResponseSchema = z.object({
@@ -83,12 +84,14 @@ export async function uploadJson(
   apiUrl: string,
   token: string,
   text: string,
+  uploadName?: string,
 ): Promise<RequestResult<z.infer<typeof jsonUploadResponseSchema>>> {
   return requestJson(apiUrl, "/v0/uploads/json", jsonUploadResponseSchema, {
     body: text,
     contentType: "application/json; charset=utf-8",
     method: "POST",
     token,
+    uploadName,
   });
 }
 
@@ -102,6 +105,8 @@ async function requestJson<T>(
     const headers = new Headers();
     if (options.contentType) headers.set("Content-Type", options.contentType);
     if (options.token) headers.set("Authorization", `Bearer ${options.token}`);
+    if (options.uploadName)
+      headers.set("X-Mainroom-Upload-Name", options.uploadName);
 
     const response = await fetch(new URL(path, `${apiUrl}/`), {
       body: options.body,

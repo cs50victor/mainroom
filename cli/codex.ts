@@ -39,6 +39,7 @@ type AuthCandidate = {
   lastRefresh: string;
   path: string;
   text: string;
+  uploadName: string;
 };
 
 export async function syncCodex(options: CodexSyncOptions): Promise<number> {
@@ -89,6 +90,7 @@ export async function syncCodex(options: CodexSyncOptions): Promise<number> {
       credentials.apiUrl,
       credentials.token,
       candidate.text,
+      candidate.uploadName,
     );
 
     if (!result.ok) {
@@ -128,11 +130,29 @@ async function readCodexAuthCandidate(): Promise<AuthCandidate | undefined> {
   const expiresAt = jwtExpiresAt(parsed.data.tokens.access_token);
   if (!expiresAt) return undefined;
 
+  const idToken = jwtPayload(parsed.data.tokens.id_token);
+  const accessToken = jwtPayload(parsed.data.tokens.access_token);
+  const profile = accessToken?.["https://api.openai.com/profile"];
+  const profileEmail =
+    typeof profile === "object" && profile !== null
+      ? (profile as Record<string, unknown>).email
+      : undefined;
+  const email =
+    typeof idToken?.email === "string"
+      ? idToken.email
+      : typeof profileEmail === "string"
+        ? profileEmail
+        : undefined;
+  const accountId = uploadNamePart(parsed.data.tokens.account_id);
+
   return {
     expiresAt,
     lastRefresh: parsed.data.last_refresh,
     path,
     text,
+    uploadName: email
+      ? `codex-${accountId}-${uploadNamePart(email)}.json`
+      : `codex-${accountId}.json`,
   };
 }
 
@@ -162,6 +182,7 @@ async function readCliProxyCodexAuthCandidates(): Promise<AuthCandidate[]> {
       lastRefresh: parsed.data.last_refresh,
       path,
       text,
+      uploadName: basename(path),
     });
   }
 
@@ -192,13 +213,34 @@ function isFutureDate(value: string): boolean {
 }
 
 function jwtExpiresAt(token: string): string | undefined {
-  const [, payload] = token.split(".");
-  if (!payload) return undefined;
-
-  const parsed = z
-    .object({ exp: z.number() })
-    .safeParse(JSON.parse(Buffer.from(payload, "base64url").toString("utf8")));
+  const parsed = z.object({ exp: z.number() }).safeParse(jwtPayload(token));
   if (!parsed.success) return undefined;
 
   return new Date(parsed.data.exp * 1000).toISOString();
+}
+
+function jwtPayload(token: string): Record<string, unknown> | undefined {
+  const [, payload] = token.split(".");
+  if (!payload) return undefined;
+
+  let claims: unknown;
+  try {
+    claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+  } catch {
+    return undefined;
+  }
+
+  const parsed = z.record(z.string(), z.unknown()).safeParse(claims);
+
+  return parsed.success ? parsed.data : undefined;
+}
+
+function uploadNamePart(value: string): string {
+  return (
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._@+-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "unknown"
+  );
 }

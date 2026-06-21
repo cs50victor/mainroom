@@ -5,10 +5,12 @@ import { openApi } from "hono-zod-openapi";
 import { z } from "zod";
 import type { HonoRequest } from "hono";
 
+import { bearerToken, verifyApiKey, type AppConfig } from "../helpers";
 import { errorSchema } from "../schemas/api-keys";
 
 const maxJsonFileBytes = 1024 * 1024;
 const maxMultipartOverheadBytes = 16 * 1024;
+const uploadNameHeader = "x-mainroom-upload-name";
 
 const uploadSchema = z.object({
   bucket: z.string(),
@@ -16,7 +18,7 @@ const uploadSchema = z.object({
   size: z.number().int().min(0),
 });
 
-export function createUploadsRoute(): Hono {
+export function createUploadsRoute(config: AppConfig): Hono {
   const uploads = new Hono();
 
   uploads.post(
@@ -33,15 +35,37 @@ export function createUploadsRoute(): Hono {
       responses: {
         200: uploadSchema,
         400: errorSchema,
+        401: errorSchema,
         413: errorSchema,
         415: errorSchema,
         502: errorSchema,
       },
     }),
     async (c) => {
+      const token = bearerToken(c.req.raw);
+      if (!token) return c.var.res(401, { error: "Unauthorized" });
+
+      let userId = "user_mock";
+      if (config.authMode !== "mock") {
+        try {
+          userId = (await verifyApiKey(config, { secret: token })).subject;
+        } catch {
+          return c.var.res(401, { error: "Unauthorized" });
+        }
+      }
+
       const upload = await readJsonUpload(c.req);
       if ("error" in upload) {
         return c.var.res(upload.status, { error: upload.error });
+      }
+
+      const uploadName =
+        c.req.header(uploadNameHeader) ?? `${crypto.randomUUID()}.json`;
+      if (!/^[A-Za-z0-9._@+-]{1,160}\.json$/.test(uploadName)) {
+        return c.var.res(400, {
+          error:
+            "X-Mainroom-Upload-Name must be a JSON filename without path separators",
+        });
       }
 
       const bucket = Bun.env.S3_BUCKET ?? Bun.env.AWS_BUCKET;
@@ -49,7 +73,7 @@ export function createUploadsRoute(): Hono {
         return c.var.res(502, { error: "S3 bucket is not configured" });
       }
 
-      const key = `uploads/json/${crypto.randomUUID()}.json`;
+      const key = `uploads/json/${encodeURIComponent(userId)}/${uploadName}`;
 
       try {
         await new S3Client().write(key, upload.text, {

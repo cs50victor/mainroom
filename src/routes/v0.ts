@@ -57,7 +57,7 @@ export function createV0Route(config: AppConfig): Hono {
   );
 
   v0.route("/api-keys", createApiKeysRoute(config));
-  v0.route("/uploads", createUploadsRoute());
+  v0.route("/uploads", createUploadsRoute(config));
 
   return v0;
 }
