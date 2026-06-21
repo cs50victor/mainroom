@@ -23,6 +23,7 @@ export type AppConfig = {
   clerkOAuthAuthorizeUrl?: string;
   clerkOAuthClientId?: string;
   clerkOAuthTokenUrl?: string;
+  clerkPublishableKey?: string;
   clerkSecretKey?: string;
   corsOrigins: string[];
   port: number;
@@ -64,6 +65,7 @@ export function readConfig(env: Env): AppConfig {
   const port = Number.parseInt(env.PORT ?? "3000", 10);
   const authMode =
     env.AUTH_MODE ?? (env.NODE_ENV === "production" ? "clerk" : "mock");
+  const clerkPublishableKey = env.CLERK_PUBLISHABLE_KEY;
   const clerkSecretKey = env.CLERK_SECRET_KEY;
   const corsOrigins = (env.CORS_ORIGIN ?? "*")
     .split(",")
@@ -82,6 +84,10 @@ export function readConfig(env: Env): AppConfig {
     throw new Error("CLERK_SECRET_KEY is required when AUTH_MODE=clerk");
   }
 
+  if (authMode === "clerk" && !clerkPublishableKey) {
+    throw new Error("CLERK_PUBLISHABLE_KEY is required when AUTH_MODE=clerk");
+  }
+
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error("PORT must be an integer between 1 and 65535");
   }
@@ -96,6 +102,7 @@ export function readConfig(env: Env): AppConfig {
     clerkOAuthAuthorizeUrl: env.CLERK_OAUTH_AUTHORIZE_URL,
     clerkOAuthClientId: env.CLERK_OAUTH_CLIENT_ID,
     clerkOAuthTokenUrl: env.CLERK_OAUTH_TOKEN_URL,
+    clerkPublishableKey,
     clerkSecretKey,
     corsOrigins,
     port,
@@ -253,8 +260,11 @@ export async function authenticateOAuthToken(
     throw new Error("CLERK_SECRET_KEY is required when AUTH_MODE=clerk");
   }
 
+  // Clerk authenticateRequest verifies oauth_token requests server-side but still requires both keys.
+  // https://github.com/clerk/clerk-docs/blob/main/docs/reference/backend/authenticate-request.mdx
   const client = createClerkClient({
     secretKey: config.clerkSecretKey,
+    publishableKey: config.clerkPublishableKey,
     apiUrl: config.clerkApiUrl,
     apiVersion: config.clerkApiVersion,
     userAgent: mainroomUserAgent,
