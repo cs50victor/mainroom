@@ -1,16 +1,14 @@
 import { Container, getContainer, getRandom } from "@cloudflare/containers";
 
 import {
-  authenticateOAuthToken,
   ClerkApiError,
-  createApiKey,
+  createCliApiKey,
   getApiKeySecret,
   readConfig,
 } from "./helpers";
 import { apiKeySchema } from "./schemas/api-keys";
 
 const instanceCount = 3;
-const cliApiKeyName = "Mainroom CLI";
 const machinePath = "/v0/machines";
 const tokenproxyEntrypoint = [
   "tokenproxy",
@@ -287,15 +285,9 @@ async function cliAuthRequest(
   if (request.method === "POST" && url.pathname === "/v0/auth/cli/exchange") {
     try {
       const config = workerAppConfig(env);
-      const { userId } = await authenticateOAuthToken(config, request);
-      const apiKey = apiKeySchema.parse(
-        await createApiKey(config, {
-          name: cliApiKeyName,
-          subject: userId,
-          description: "Created by Mainroom CLI",
-          createdBy: userId,
-        }),
-      );
+      const body = await readJson(request.clone());
+      const result = await createCliApiKey(config, request, body.username);
+      const apiKey = apiKeySchema.parse(result.apiKey);
 
       if (!apiKey.secret) {
         return json(
@@ -310,6 +302,7 @@ async function cliAuthRequest(
           subject: apiKey.subject,
           secret: apiKey.secret,
         },
+        username: result.username,
       });
     } catch (error) {
       const response = cliAuthError(error);
@@ -322,10 +315,11 @@ async function cliAuthRequest(
 
 function cliAuthError(error: unknown): {
   error: string;
-  status: 400 | 401 | 502;
+  status: 400 | 401 | 409 | 502;
 } {
   if (error instanceof ClerkApiError) {
     if (error.status === 401) return { error: "Login failed", status: 401 };
+    if (error.status === 409) return { error: error.message, status: 409 };
     if (error.status >= 400 && error.status < 500) {
       return { error: error.message, status: 400 };
     }

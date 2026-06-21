@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { errorMessage } from "./errors";
-import type { CliOAuthConfig } from "./types";
+import type { CliExchangeParams, CliOAuthConfig } from "./types";
 
 type RequestOptions = {
   body?: BodyInit;
@@ -31,6 +31,7 @@ const cliExchangeResponseSchema = z.object({
     subject: z.string(),
     secret: z.string(),
   }),
+  username: z.string().optional(),
 });
 
 const jsonUploadResponseSchema = z.object({
@@ -65,19 +66,26 @@ export async function fetchCliOAuthConfig(
 export async function mintCliApiKey(
   apiUrl: string,
   oauthToken: string,
-): Promise<z.infer<typeof cliExchangeResponseSchema>["apiKey"]> {
+  params: CliExchangeParams = {},
+): Promise<z.infer<typeof cliExchangeResponseSchema>> {
+  const body = JSON.stringify(params);
   const result = await requestJson(
     apiUrl,
     "/v0/auth/cli/exchange",
     cliExchangeResponseSchema,
-    { method: "POST", token: oauthToken },
+    {
+      body,
+      contentType: "application/json; charset=utf-8",
+      method: "POST",
+      token: oauthToken,
+    },
   );
 
   if (!result.ok) {
     throw new Error(result.error);
   }
 
-  return result.data.apiKey;
+  return result.data;
 }
 
 export async function uploadJson(

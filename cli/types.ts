@@ -23,3 +23,7 @@ export type CliOAuthConfig = {
   clientId: string;
   tokenUrl: string;
 };
+
+export type CliExchangeParams = {
+  username?: string;
+};
