@@ -1488,7 +1488,7 @@ async function renderTokenproxyConfig(
   for (const uploadName of uploads.names) {
     const authJsonUrl = await signedMainroomUrl(
       env,
-      `/v0/tokenproxy/auth-json/${encodeURIComponent(subject)}/${encodeURIComponent(uploadName)}`,
+      `/v0/tokenproxy/auth-json/${encodeURIComponent(subject)}/${uploadName}`,
       signedAuthJsonTtlSeconds,
     );
     config.accounts.push({
