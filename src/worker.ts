@@ -14,13 +14,14 @@ import {
 } from "./helpers";
 import { apiKeySchema } from "./schemas/api-keys";
 import {
+  authorizeShareGrant,
   inFlightKey,
   normalizeShareGrantInput,
   parsePeerRequestScope,
   providerConsumerKey,
   renderConsumerShare,
   renderPeerAccount,
-  shareScopeDenial,
+  requiresPeerGrant,
   stripUntrustedPeerHeaders,
   upsertShareGrant,
   usageKey,
@@ -248,67 +249,39 @@ export class ShareGrantStore extends DurableObject<Env> {
       const key = providerConsumerKey(providerSubject, consumerSubject);
       const grant = await this.ctx.storage.get<ShareGrantRecord>(key);
 
-      if (!grant || grant.status !== "active") {
-        console.log("share_grant_deny", {
-          consumerSubject,
-          providerSubject,
-          reason: "missing_grant",
-        });
-        return json({ error: "No active grant" }, 403);
+      const usage = await this.grantUsage(grant);
+      const decision = authorizeShareGrant(grant, scope, usage);
+
+      if (!decision.ok) {
+        if (!grant || decision.error === "No active grant") {
+          console.log("share_grant_deny", {
+            consumerSubject,
+            providerSubject,
+            reason: "missing_grant",
+          });
+        } else if (decision.status === 403) {
+          console.log("share_grant_deny", {
+            ...auditGrant(grant),
+            reason: decision.error,
+          });
+        } else {
+          console.log("share_grant_cap_deny", auditGrant(grant));
+        }
+
+        return json({ error: decision.error }, decision.status);
       }
 
-      const denial = shareScopeDenial(grant, scope);
-      if (denial) {
-        console.log("share_grant_deny", {
-          ...auditGrant(grant),
-          reason: denial,
-        });
-        return json({ error: denial }, 403);
-      }
-
-      const requestLimit = grant.limits?.requestsPerDay;
+      if (!grant) return json({ error: "No active grant" }, 403);
       const requestKey = usageKey(grant.grantId);
-      if (requestLimit) {
-        const used = (await this.ctx.storage.get<number>(requestKey)) ?? 0;
-        if (used >= requestLimit) {
-          console.log("share_grant_cap_deny", auditGrant(grant));
-          return json({ error: "Daily request cap exhausted" }, 429);
-        }
-      }
 
-      const tokenLimit = grant.limits?.tokensPerDay ?? 0;
-      const tokenKey =
-        tokenLimit && scope.requestedTokens
-          ? `${requestKey}:tokens`
-          : undefined;
-      let tokenUsed = 0;
-      if (tokenKey) {
-        tokenUsed = (await this.ctx.storage.get<number>(tokenKey)) ?? 0;
-        if (tokenUsed + scope.requestedTokens > tokenLimit) {
-          console.log("share_grant_cap_deny", auditGrant(grant));
-          return json({ error: "Daily token cap exhausted" }, 429);
-        }
+      if (decision.lease) {
+        await this.ctx.storage.put(
+          inFlightKey(grant.grantId),
+          decision.usage.inFlight,
+        );
       }
-
-      const concurrentLimit = grant.limits?.maxConcurrentRequests;
-      if (concurrentLimit) {
-        const key = inFlightKey(grant.grantId);
-        const used = (await this.ctx.storage.get<number>(key)) ?? 0;
-        if (used >= concurrentLimit) {
-          console.log("share_grant_cap_deny", auditGrant(grant));
-          return json({ error: "Concurrent request cap exhausted" }, 429);
-        }
-
-        await this.ctx.storage.put(key, used + 1);
-      }
-
-      if (tokenKey) {
-        await this.ctx.storage.put(tokenKey, tokenUsed + scope.requestedTokens);
-      }
-      await this.ctx.storage.put(
-        requestKey,
-        ((await this.ctx.storage.get<number>(requestKey)) ?? 0) + 1,
-      );
+      await this.ctx.storage.put(`${requestKey}:tokens`, decision.usage.tokens);
+      await this.ctx.storage.put(requestKey, decision.usage.requests);
       console.log("share_grant_allow", auditGrant(grant));
       return json({ grantId: grant.grantId });
     }
@@ -333,6 +306,20 @@ export class ShareGrantStore extends DurableObject<Env> {
     });
 
     return [...entries.values()].filter(predicate);
+  }
+
+  private async grantUsage(
+    grant: ShareGrantRecord | undefined,
+  ): Promise<{ requests: number; tokens: number; inFlight: number }> {
+    if (!grant) return { requests: 0, tokens: 0, inFlight: 0 };
+
+    const requestKey = usageKey(grant.grantId);
+    return {
+      requests: (await this.ctx.storage.get<number>(requestKey)) ?? 0,
+      tokens: (await this.ctx.storage.get<number>(`${requestKey}:tokens`)) ?? 0,
+      inFlight:
+        (await this.ctx.storage.get<number>(inFlightKey(grant.grantId))) ?? 0,
+    };
   }
 }
 
@@ -540,7 +527,7 @@ async function providerEdgeAuth(
     return json({ error: "Unauthorized" }, 401);
   }
 
-  if (consumerSubject === providerSubject) {
+  if (!requiresPeerGrant(providerSubject, consumerSubject)) {
     return { consumerSubject };
   }
 

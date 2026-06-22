@@ -1,11 +1,15 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  authorizeShareGrant,
   normalizeShareGrantInput,
   parsePeerRequestScope,
   renderPeerAccount,
+  requiresPeerGrant,
   shareScopeDenial,
+  upsertShareGrant,
   stripUntrustedPeerHeaders,
+  type PeerRequestScope,
   type ShareGrantRecord,
 } from "./shares";
 
@@ -29,6 +33,15 @@ function grant(overrides: Partial<ShareGrantRecord> = {}): ShareGrantRecord {
   };
 }
 
+const scope: PeerRequestScope = {
+  route: "responses",
+  model: "gpt-5.1",
+  serviceTier: "auto",
+  requestedTokens: 100,
+  websocket: false,
+  compact: false,
+};
+
 describe("peerAccount", () => {
   test("renders only tokenproxy routing metadata", () => {
     const account = renderPeerAccount(grant());
@@ -46,6 +59,46 @@ describe("peerAccount", () => {
       supports_anthropic_messages: false,
       service_tiers: ["auto"],
     });
+  });
+});
+
+describe("share grants", () => {
+  test("upserts keep one stable grant per provider-consumer pair", () => {
+    const first = upsertShareGrant(
+      undefined,
+      {
+        routes: ["responses"],
+        models: ["gpt-5.1"],
+        serviceTiers: ["auto"],
+        supportsResponsesWs: false,
+        supportsCompact: false,
+        limits: {},
+      },
+      {
+        providerSubject: "provider",
+        providerUsername: "userb",
+        consumerSubject: "consumer",
+        consumerUsername: "usera",
+      },
+      "2026-06-21T00:00:00.000Z",
+    );
+    const second = upsertShareGrant(
+      first,
+      { ...first, models: ["gpt-5.2"], limits: { requestsPerDay: 2 } },
+      {
+        providerSubject: first.providerSubject,
+        providerUsername: first.providerUsername,
+        consumerSubject: first.consumerSubject,
+        consumerUsername: first.consumerUsername,
+      },
+      "2026-06-21T01:00:00.000Z",
+    );
+
+    expect(second.grantId).toBe(first.grantId);
+    expect(second.createdAt).toBe(first.createdAt);
+    expect(second.updatedAt).toBe("2026-06-21T01:00:00.000Z");
+    expect(second.models).toEqual(["gpt-5.2"]);
+    expect(second.status).toBe("active");
   });
 });
 
@@ -94,6 +147,119 @@ describe("scopeDenial", () => {
         compact: true,
       }),
     ).toBe("Compact requests are not shared");
+  });
+});
+
+describe("authorizeShareGrant", () => {
+  test("does not require a grant for provider-owned calls", () => {
+    expect(requiresPeerGrant("provider", "provider")).toBe(false);
+    expect(requiresPeerGrant("provider", "consumer")).toBe(true);
+  });
+
+  test("allows valid peer calls and returns updated counters", () => {
+    expect(
+      authorizeShareGrant(grant(), scope, {
+        requests: 0,
+        tokens: 0,
+        inFlight: 0,
+      }),
+    ).toEqual({
+      ok: true,
+      lease: false,
+      usage: { requests: 1, tokens: 100, inFlight: 0 },
+    });
+  });
+
+  test("returns a lease for max-concurrency limited grants", () => {
+    expect(
+      authorizeShareGrant(
+        grant({ limits: { maxConcurrentRequests: 2 } }),
+        scope,
+        {
+          requests: 0,
+          tokens: 0,
+          inFlight: 1,
+        },
+      ),
+    ).toEqual({
+      ok: true,
+      lease: true,
+      usage: { requests: 1, tokens: 100, inFlight: 2 },
+    });
+  });
+
+  test("rejects missing revoked model route and cap failures", () => {
+    expect(
+      authorizeShareGrant(undefined, scope, {
+        requests: 0,
+        tokens: 0,
+        inFlight: 0,
+      }),
+    ).toEqual({ ok: false, status: 403, error: "No active grant" });
+
+    expect(
+      authorizeShareGrant(grant({ status: "revoked" }), scope, {
+        requests: 0,
+        tokens: 0,
+        inFlight: 0,
+      }),
+    ).toEqual({ ok: false, status: 403, error: "No active grant" });
+
+    expect(
+      authorizeShareGrant(
+        grant(),
+        { ...scope, model: "gpt-4o" },
+        { requests: 0, tokens: 0, inFlight: 0 },
+      ),
+    ).toEqual({ ok: false, status: 403, error: "Model is not shared" });
+
+    expect(
+      authorizeShareGrant(
+        grant(),
+        { ...scope, route: "chat_completions" },
+        { requests: 0, tokens: 0, inFlight: 0 },
+      ),
+    ).toEqual({ ok: false, status: 403, error: "Route is not shared" });
+
+    expect(
+      authorizeShareGrant(grant({ limits: { requestsPerDay: 1 } }), scope, {
+        requests: 1,
+        tokens: 0,
+        inFlight: 0,
+      }),
+    ).toEqual({
+      ok: false,
+      status: 429,
+      error: "Daily request cap exhausted",
+    });
+
+    expect(
+      authorizeShareGrant(grant({ limits: { tokensPerDay: 150 } }), scope, {
+        requests: 0,
+        tokens: 100,
+        inFlight: 0,
+      }),
+    ).toEqual({
+      ok: false,
+      status: 429,
+      error: "Daily token cap exhausted",
+    });
+
+    expect(
+      authorizeShareGrant(
+        grant({ limits: { maxConcurrentRequests: 1 } }),
+        scope,
+        {
+          requests: 0,
+          tokens: 0,
+          inFlight: 1,
+        },
+      ),
+    ).toEqual({
+      ok: false,
+      status: 429,
+      error: "Concurrent request cap exhausted",
+    });
   });
 });
 
@@ -151,7 +317,7 @@ describe("parsePeerRequestScope", () => {
 });
 
 describe("stripUntrustedPeerHeaders", () => {
-  test("removes caller-supplied peer headers", () => {
+  test("removes hostile caller-supplied peer headers", () => {
     const headers = new Headers({
       "x-mainroom-peer-grant-id": "stale",
       "x-mainroom-peer-provider": "wrong",

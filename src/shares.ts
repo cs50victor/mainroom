@@ -51,6 +51,24 @@ export type PeerRequestScope = {
   compact: boolean;
 };
 
+export type ShareUsage = {
+  requests: number;
+  tokens: number;
+  inFlight: number;
+};
+
+export type ShareAuthorization =
+  | {
+      ok: true;
+      lease: boolean;
+      usage: ShareUsage;
+    }
+  | {
+      ok: false;
+      status: 403 | 429;
+      error: string;
+    };
+
 export function normalizeShareGrantInput(
   body: unknown,
 ): ShareGrantInput | { error: string } {
@@ -123,6 +141,61 @@ export function shareScopeDenial(
   }
 
   return undefined;
+}
+
+export function authorizeShareGrant(
+  grant: ShareGrantRecord | undefined,
+  scope: PeerRequestScope,
+  usage: ShareUsage,
+): ShareAuthorization {
+  if (!grant || grant.status !== "active") {
+    return { ok: false, status: 403, error: "No active grant" };
+  }
+
+  const denial = shareScopeDenial(grant, scope);
+  if (denial) return { ok: false, status: 403, error: denial };
+
+  if (
+    grant.limits.requestsPerDay &&
+    usage.requests >= grant.limits.requestsPerDay
+  ) {
+    return { ok: false, status: 429, error: "Daily request cap exhausted" };
+  }
+
+  if (
+    grant.limits.tokensPerDay &&
+    usage.tokens + scope.requestedTokens > grant.limits.tokensPerDay
+  ) {
+    return { ok: false, status: 429, error: "Daily token cap exhausted" };
+  }
+
+  if (
+    grant.limits.maxConcurrentRequests &&
+    usage.inFlight >= grant.limits.maxConcurrentRequests
+  ) {
+    return {
+      ok: false,
+      status: 429,
+      error: "Concurrent request cap exhausted",
+    };
+  }
+
+  return {
+    ok: true,
+    lease: Boolean(grant.limits.maxConcurrentRequests),
+    usage: {
+      requests: usage.requests + 1,
+      tokens: usage.tokens + scope.requestedTokens,
+      inFlight: usage.inFlight + (grant.limits.maxConcurrentRequests ? 1 : 0),
+    },
+  };
+}
+
+export function requiresPeerGrant(
+  providerSubject: string,
+  consumerSubject: string,
+): boolean {
+  return providerSubject !== consumerSubject;
 }
 
 export function providerConsumerKey(
