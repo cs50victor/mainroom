@@ -77,7 +77,7 @@ const s3ListParser = new XMLParser();
  *   https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/operations/draining
  *   https://nginx.org/en/docs/control.html
  */
-const tokenproxyRuntimeVersion = "v0.1.15";
+const tokenproxyRuntimeVersion = "v0.1.16";
 const tokenproxyEntrypoint = [
   "tokenproxy",
   "--config",
