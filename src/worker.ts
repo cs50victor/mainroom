@@ -1,19 +1,41 @@
 import { Container, getContainer, getRandom } from "@cloudflare/containers";
+import { DurableObject } from "cloudflare:workers";
 
 import {
+  bearerToken,
   ClerkApiError,
   createCliApiKey,
   getApiKeySecret,
+  getCliSubjectUsername,
+  getCliUsernameSubject,
   isCliUsernameTaken,
   readConfig,
+  verifyApiKey,
 } from "./helpers";
 import { apiKeySchema } from "./schemas/api-keys";
+import {
+  authorizeShareGrant,
+  inFlightKey,
+  normalizeShareGrantInput,
+  parsePeerRequestScope,
+  providerConsumerKey,
+  renderConsumerShare,
+  renderPeerAccount,
+  requiresPeerGrant,
+  stripUntrustedPeerHeaders,
+  upsertShareGrant,
+  usageKey,
+  type PeerRequestScope,
+  type ShareGrantRecord,
+} from "./shares";
 
 const rootHost = "mainroom.sh";
 const instanceCount = 3;
 const machinePath = "/v0/machines";
 
 /*
+ * tokenproxy is the inference data plane; Mainroom only starts it and routes to it.
+ *
  * Tokenproxy rollout invariant:
  *
  * Runtime/image/env changes must create a new user-machine generation, not
@@ -47,7 +69,7 @@ const machinePath = "/v0/machines";
  *   https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/operations/draining
  *   https://nginx.org/en/docs/control.html
  */
-const tokenproxyRuntimeVersion = "v0.1.12";
+const tokenproxyRuntimeVersion = "v0.1.14";
 const tokenproxyEntrypoint = [
   "tokenproxy",
   "-c",
@@ -86,9 +108,12 @@ type Env = {
   S3_REGION?: string;
   S3_SECRET_ACCESS_KEY?: string;
   S3_SESSION_TOKEN?: string;
+  SHARE_GRANT_STORE: DurableObjectNamespace<ShareGrantStore>;
   USER_MACHINE_CONTAINER: DurableObjectNamespace<UserMachineContainer>;
 };
 
+// Durable Object storage is the machine source of truth; tokenproxy process state is disposable.
+// Future desired config fields belong here, while live tokenproxy status stays observational.
 type UserMachineRecord = {
   apiKeyId: string;
   id: string;
@@ -116,6 +141,184 @@ export class MainroomContainer extends Container<Env> {
       CORS_ORIGIN: env.CORS_ORIGIN ?? "https://mainroom.sh",
       NODE_ENV: "production",
       PORT: "3000",
+    };
+  }
+}
+
+export class ShareGrantStore extends DurableObject<Env> {
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+
+    if (request.method === "PUT" && url.pathname === "/grants") {
+      const body = await readJson(request);
+      const input = normalizeShareGrantInput(body.input);
+      if ("error" in input) return json({ error: input.error }, 400);
+      const identity = shareIdentityFrom(body.identity);
+      const key = providerConsumerKey(
+        identity.providerSubject,
+        identity.consumerSubject,
+      );
+      const existing = await this.ctx.storage.get<ShareGrantRecord>(key);
+      const grant = upsertShareGrant(
+        existing,
+        input,
+        identity,
+        new Date().toISOString(),
+      );
+
+      // Mainroom owns grant authority; tokenproxy receives only routing metadata.
+      await this.ctx.storage.put(key, grant);
+      console.log("share_grant_upsert", auditGrant(grant));
+
+      return json({ grant });
+    }
+
+    if (request.method === "DELETE" && url.pathname === "/grants") {
+      const body = await readJson(request);
+      const providerSubject = stringField(body.providerSubject);
+      const consumerSubject = stringField(body.consumerSubject);
+      const key = providerConsumerKey(providerSubject, consumerSubject);
+      const grant = await this.ctx.storage.get<ShareGrantRecord>(key);
+      if (!grant || grant.status !== "active") {
+        return json({ error: "Active grant not found" }, 404);
+      }
+
+      const revoked = {
+        ...grant,
+        revokedAt: new Date().toISOString(),
+        status: "revoked" as const,
+        updatedAt: new Date().toISOString(),
+      };
+      await this.ctx.storage.put(key, revoked);
+      console.log("share_grant_revoke", auditGrant(revoked));
+
+      return json({ grant: revoked });
+    }
+
+    if (request.method === "PATCH" && url.pathname === "/grants") {
+      const body = await readJson(request);
+      const providerSubject = stringField(body.providerSubject);
+      const consumerSubject = stringField(body.consumerSubject);
+      const status: ShareGrantRecord["status"] =
+        body.status === "active" ? "active" : "disabled";
+      const key = providerConsumerKey(providerSubject, consumerSubject);
+      const grant = await this.ctx.storage.get<ShareGrantRecord>(key);
+      if (!grant || grant.status === "revoked") {
+        return json({ error: "Grant not found" }, 404);
+      }
+
+      const next = {
+        ...grant,
+        status,
+        updatedAt: new Date().toISOString(),
+      };
+      await this.ctx.storage.put(key, next);
+      console.log("share_grant_status", auditGrant(next));
+
+      return json({ grant: next });
+    }
+
+    if (request.method === "GET" && url.pathname === "/providers") {
+      const providerSubject = url.searchParams.get("providerSubject") ?? "";
+      const grants = await this.listGrants(
+        (grant) => grant.providerSubject === providerSubject,
+      );
+
+      return json({ grants });
+    }
+
+    if (request.method === "GET" && url.pathname === "/consumers") {
+      const consumerSubject = url.searchParams.get("consumerSubject") ?? "";
+      const grants = await this.listGrants(
+        (grant) =>
+          grant.consumerSubject === consumerSubject &&
+          grant.status === "active",
+      );
+
+      return json({
+        providers: grants.map(renderConsumerShare),
+        tokenproxy_accounts: grants.map(renderPeerAccount),
+      });
+    }
+
+    if (request.method === "POST" && url.pathname === "/authorize") {
+      const body = await readJson(request);
+      const providerSubject = stringField(body.providerSubject);
+      const consumerSubject = stringField(body.consumerSubject);
+      const scope = body.scope as PeerRequestScope;
+      const key = providerConsumerKey(providerSubject, consumerSubject);
+      const grant = await this.ctx.storage.get<ShareGrantRecord>(key);
+
+      const usage = await this.grantUsage(grant);
+      const decision = authorizeShareGrant(grant, scope, usage);
+
+      if (!decision.ok) {
+        if (!grant || decision.error === "No active grant") {
+          console.log("share_grant_deny", {
+            consumerSubject,
+            providerSubject,
+            reason: "missing_grant",
+          });
+        } else if (decision.status === 403) {
+          console.log("share_grant_deny", {
+            ...auditGrant(grant),
+            reason: decision.error,
+          });
+        } else {
+          console.log("share_grant_cap_deny", auditGrant(grant));
+        }
+
+        return json({ error: decision.error }, decision.status);
+      }
+
+      if (!grant) return json({ error: "No active grant" }, 403);
+      const requestKey = usageKey(grant.grantId);
+
+      if (decision.lease) {
+        await this.ctx.storage.put(
+          inFlightKey(grant.grantId),
+          decision.usage.inFlight,
+        );
+      }
+      await this.ctx.storage.put(`${requestKey}:tokens`, decision.usage.tokens);
+      await this.ctx.storage.put(requestKey, decision.usage.requests);
+      console.log("share_grant_allow", auditGrant(grant));
+      return json({ grantId: grant.grantId });
+    }
+
+    if (request.method === "POST" && url.pathname === "/release") {
+      const body = await readJson(request);
+      const key = inFlightKey(stringField(body.grantId));
+      const used = (await this.ctx.storage.get<number>(key)) ?? 0;
+      await this.ctx.storage.put(key, Math.max(0, used - 1));
+
+      return json({ released: true });
+    }
+
+    return json({ error: "Not found" }, 404);
+  }
+
+  private async listGrants(
+    predicate: (grant: ShareGrantRecord) => boolean,
+  ): Promise<ShareGrantRecord[]> {
+    const entries = await this.ctx.storage.list<ShareGrantRecord>({
+      prefix: "grant:",
+    });
+
+    return [...entries.values()].filter(predicate);
+  }
+
+  private async grantUsage(
+    grant: ShareGrantRecord | undefined,
+  ): Promise<{ requests: number; tokens: number; inFlight: number }> {
+    if (!grant) return { requests: 0, tokens: 0, inFlight: 0 };
+
+    const requestKey = usageKey(grant.grantId);
+    return {
+      requests: (await this.ctx.storage.get<number>(requestKey)) ?? 0,
+      tokens: (await this.ctx.storage.get<number>(`${requestKey}:tokens`)) ?? 0,
+      inFlight:
+        (await this.ctx.storage.get<number>(inFlightKey(grant.grantId))) ?? 0,
     };
   }
 }
@@ -171,19 +374,39 @@ export class UserMachineContainer extends Container<Env> {
     await this.ctx.storage.delete(this.storageKey);
   }
 
+  async restartForShareChange(): Promise<{ restarted: boolean }> {
+    const record = await this.ctx.storage.get<UserMachineRecord>(
+      this.storageKey,
+    );
+    if (!record) return { restarted: false };
+
+    // Grant changes alter consumer-visible tokenproxy config; restart is the current reload primitive.
+    await this.destroy();
+    await this.startMachine(record);
+
+    return { restarted: true };
+  }
+
   override async fetch(request: Request): Promise<Response> {
+    // Every user-machine fetch is also a wake-up path for sleeping tokenproxy containers.
     const record = await this.ctx.storage.get<UserMachineRecord>(
       this.storageKey,
     );
 
-    if (record) {
-      await this.startMachine(record);
-    }
+    if (!record) return json({ error: "User machine not found" }, 404);
 
-    return super.fetch(request);
+    await this.startMachine(record);
+    const { secret } = await getApiKeySecret(
+      workerAppConfig(this.env),
+      record.apiKeyId,
+    );
+
+    return super.fetch(tokenproxyRequest(request, secret));
   }
 
   private async startMachine(record: UserMachineRecord): Promise<void> {
+    // Mainroom injects only the user's private tokenproxy bearer on the private container hop.
+    // Runtime object reads should move to signed HTTPS URLs, not long-lived S3 credentials.
     const { secret } = await getApiKeySecret(
       workerAppConfig(this.env),
       record.apiKeyId,
@@ -210,6 +433,7 @@ export class UserMachineContainer extends Container<Env> {
 }
 
 function proxiedRequest(request: Request): Request {
+  // Forwarding metadata belongs to Mainroom; OpenAI-compatible request parsing stays in tokenproxy.
   const url = new URL(request.url);
   const headers = new Headers(request.headers);
   const cf = request.cf;
@@ -227,6 +451,103 @@ function proxiedRequest(request: Request): Request {
   }
 
   return new Request(request, { headers });
+}
+
+function tokenproxyRequest(
+  request: Request,
+  tokenproxyClientKey: string,
+): Request {
+  // Provider tokenproxy receives only its private bearer, never the peer caller bearer.
+  const forwarded = proxiedRequest(request);
+  const headers = new Headers(forwarded.headers);
+
+  stripUntrustedPeerHeaders(headers);
+  headers.set("Authorization", `Bearer ${tokenproxyClientKey}`);
+
+  return new Request(forwarded, { headers });
+}
+
+async function userMachineV1Request(
+  request: Request,
+  env: Env,
+): Promise<Response | undefined> {
+  const url = new URL(request.url);
+  if (!url.pathname.startsWith("/v1/")) return undefined;
+
+  const username = usernameFromMainroomHost(url.hostname);
+  if (!username) return undefined;
+
+  // The subdomain names the provider; Clerk maps that public name back to the durable subject.
+  const subject = await getCliUsernameSubject(workerAppConfig(env), username);
+  if (!subject) return json({ error: "User machine not found" }, 404);
+
+  const auth = await providerEdgeAuth(request, env, subject);
+  if (auth instanceof Response) return auth;
+
+  // Non-owner peer calls are authorized here before Mainroom injects the provider bearer.
+  // Deterministic user:<subject> routing keeps one logical tokenproxy machine per user.
+  const machine = getContainer(env.USER_MACHINE_CONTAINER, machineId(subject));
+
+  // Container.fetch, not containerFetch, preserves WebSocket upgrades for /v1/responses.
+  try {
+    return releaseGrantWhenDone(
+      env,
+      auth.grantId,
+      await machine.fetch(request),
+    );
+  } catch (error) {
+    if (auth.grantId) await releaseShareGrant(env, auth.grantId);
+    throw error;
+  }
+}
+
+async function providerEdgeAuth(
+  request: Request,
+  env: Env,
+  providerSubject: string,
+): Promise<{ consumerSubject: string; grantId?: string } | Response> {
+  const token = bearerToken(request);
+  if (!token) {
+    console.log("share_grant_deny", {
+      providerSubject,
+      reason: "missing_bearer",
+    });
+    return json({ error: "Unauthorized" }, 401);
+  }
+
+  let consumerSubject: string;
+  try {
+    const apiKey = await verifyApiKey(workerAppConfig(env), { secret: token });
+    consumerSubject = apiKey.subject;
+  } catch {
+    console.log("share_grant_deny", {
+      providerSubject,
+      reason: "invalid_bearer",
+    });
+    return json({ error: "Unauthorized" }, 401);
+  }
+
+  if (!requiresPeerGrant(providerSubject, consumerSubject)) {
+    return { consumerSubject };
+  }
+
+  const body = await readJson(request.clone());
+  const scope = parsePeerRequestScope(request, body);
+  const response = await shareStore(env).fetch(
+    new Request("https://share-store/authorize", {
+      method: "POST",
+      body: JSON.stringify({ providerSubject, consumerSubject, scope }),
+    }),
+  );
+
+  if (!response.ok) {
+    return json(await response.json(), response.status);
+  }
+
+  const result = (await response.json()) as { grantId?: unknown };
+  const grantId =
+    typeof result.grantId === "string" ? result.grantId : undefined;
+  return { consumerSubject, grantId };
 }
 
 async function machineRequest(
@@ -354,6 +675,143 @@ async function cliAuthRequest(
   return json({ error: "Method not allowed" }, 405);
 }
 
+async function shareRequest(
+  request: Request,
+  env: Env,
+): Promise<Response | undefined> {
+  const url = new URL(request.url);
+  if (
+    url.pathname !== "/v0/shares/providers" &&
+    url.pathname !== "/v0/shares/consumers/me" &&
+    !url.pathname.startsWith("/v0/shares/providers/")
+  ) {
+    return undefined;
+  }
+
+  const config = workerAppConfig(env);
+  const providerSubject = await verifiedApiKeySubject(config, request);
+  if (!providerSubject) return json({ error: "Unauthorized" }, 401);
+
+  if (request.method === "GET" && url.pathname === "/v0/shares/providers") {
+    const response = await shareStore(env).fetch(
+      new Request(
+        `https://share-store/providers?providerSubject=${encodeURIComponent(providerSubject)}`,
+      ),
+    );
+
+    return json(await response.json(), response.status);
+  }
+
+  if (request.method === "GET" && url.pathname === "/v0/shares/consumers/me") {
+    const response = await shareStore(env).fetch(
+      new Request(
+        `https://share-store/consumers?consumerSubject=${encodeURIComponent(providerSubject)}`,
+      ),
+    );
+
+    return json(await response.json(), response.status);
+  }
+
+  const match = url.pathname.match(/^\/v0\/shares\/providers\/([^/]+)$/);
+  if (!match) return json({ error: "Not found" }, 404);
+
+  const consumerUsername = decodeURIComponent(match[1] ?? "").trim();
+  const consumerSubject = await getCliUsernameSubject(config, consumerUsername);
+  if (!consumerSubject) return json({ error: "Consumer not found" }, 404);
+
+  if (request.method === "PUT") {
+    const providerUsername = await getCliSubjectUsername(
+      config,
+      providerSubject,
+    );
+    if (!providerUsername)
+      return json({ error: "Provider username not found" }, 404);
+
+    const input = normalizeShareGrantInput(await readJson(request));
+    if ("error" in input) return json({ error: input.error }, 400);
+
+    const response = await shareStore(env).fetch(
+      new Request("https://share-store/grants", {
+        method: "PUT",
+        body: JSON.stringify({
+          identity: {
+            providerSubject,
+            providerUsername,
+            consumerSubject,
+            consumerUsername,
+          },
+          input,
+        }),
+      }),
+    );
+    const result = await response.json();
+
+    if (response.ok) {
+      const reconcile = await reconcileConsumerMachine(env, consumerSubject);
+      console.log("share_grant_reconcile", {
+        consumerSubject,
+        providerSubject,
+        ...reconcile,
+      });
+    }
+
+    return json(result, response.status);
+  }
+
+  if (request.method === "DELETE") {
+    const response = await shareStore(env).fetch(
+      new Request("https://share-store/grants", {
+        method: "DELETE",
+        body: JSON.stringify({ providerSubject, consumerSubject }),
+      }),
+    );
+    const result = await response.json();
+
+    if (response.ok) {
+      const reconcile = await reconcileConsumerMachine(env, consumerSubject);
+      console.log("share_grant_reconcile", {
+        consumerSubject,
+        providerSubject,
+        ...reconcile,
+      });
+    }
+
+    return json(result, response.status);
+  }
+
+  if (request.method === "PATCH") {
+    const body = await readJson(request);
+    if (body.status !== "active" && body.status !== "disabled") {
+      return json({ error: "status must be active or disabled" }, 400);
+    }
+
+    const response = await shareStore(env).fetch(
+      new Request("https://share-store/grants", {
+        method: "PATCH",
+        body: JSON.stringify({
+          providerSubject,
+          consumerSubject,
+          status: body.status,
+        }),
+      }),
+    );
+    const result = await response.json();
+
+    if (response.ok) {
+      const reconcile = await reconcileConsumerMachine(env, consumerSubject);
+      console.log("share_grant_reconcile", {
+        consumerSubject,
+        providerSubject,
+        ...reconcile,
+      });
+    }
+
+    return json(result, response.status);
+  }
+
+  return json({ error: "Method not allowed" }, 405);
+}
+
 async function usernameStatusRequest(
   request: Request,
   env: Env,
@@ -378,6 +836,7 @@ async function usernameStatusRequest(
 }
 
 function usernameFromMainroomHost(hostname: string): string | undefined {
+  // Only single-label user subdomains are routable; nested labels stay out of user identity.
   const suffix = `.${rootHost}`;
   if (!hostname.endsWith(suffix)) return undefined;
 
@@ -429,7 +888,105 @@ async function readJson(request: Request): Promise<Record<string, unknown>> {
   }
 }
 
+async function verifiedApiKeySubject(
+  config: ReturnType<typeof workerAppConfig>,
+  request: Request,
+): Promise<string | undefined> {
+  const token = bearerToken(request);
+  if (!token) return undefined;
+
+  try {
+    return (await verifyApiKey(config, { secret: token })).subject;
+  } catch {
+    return undefined;
+  }
+}
+
+function shareStore(env: Env): DurableObjectStub<ShareGrantStore> {
+  return env.SHARE_GRANT_STORE.get(
+    env.SHARE_GRANT_STORE.idFromName("mainroom-share-grants"),
+  );
+}
+
+async function reconcileConsumerMachine(
+  env: Env,
+  consumerSubject: string,
+): Promise<{ restarted: boolean }> {
+  const machine = getContainer(
+    env.USER_MACHINE_CONTAINER,
+    machineId(consumerSubject),
+  );
+
+  return machine.restartForShareChange();
+}
+
+async function releaseShareGrant(env: Env, grantId: string): Promise<void> {
+  await shareStore(env).fetch(
+    new Request("https://share-store/release", {
+      method: "POST",
+      body: JSON.stringify({ grantId }),
+    }),
+  );
+}
+
+function releaseGrantWhenDone(
+  env: Env,
+  grantId: string | undefined,
+  response: Response,
+): Response {
+  if (!grantId) return response;
+
+  if (!response.body) {
+    void releaseShareGrant(env, grantId);
+    return response;
+  }
+
+  const stream = new TransformStream();
+  response.body.pipeTo(stream.writable).finally(() => {
+    void releaseShareGrant(env, grantId);
+  });
+
+  return new Response(stream.readable, response);
+}
+
+function shareIdentityFrom(value: unknown): {
+  consumerSubject: string;
+  consumerUsername: string;
+  providerSubject: string;
+  providerUsername: string;
+} {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("identity is required");
+  }
+
+  const identity = value as Record<string, unknown>;
+  return {
+    consumerSubject: stringField(identity.consumerSubject),
+    consumerUsername: stringField(identity.consumerUsername),
+    providerSubject: stringField(identity.providerSubject),
+    providerUsername: stringField(identity.providerUsername),
+  };
+}
+
+function stringField(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error("Expected a non-empty string");
+  }
+
+  return value.trim();
+}
+
+function auditGrant(grant: ShareGrantRecord) {
+  return {
+    consumerSubject: grant.consumerSubject,
+    grantId: grant.grantId,
+    providerSubject: grant.providerSubject,
+    status: grant.status,
+  };
+}
+
 function machineId(subject: string): string {
+  // User machines are keyed by subject plus runtime generation, not username.
   return `user:${subject}:${tokenproxyRuntimeVersion}`;
 }
 
@@ -581,6 +1138,13 @@ export default {
      */
     const cliResponse = await cliAuthRequest(request, env);
     if (cliResponse) return cliResponse;
+
+    const shareResponse = await shareRequest(request, env);
+    if (shareResponse) return shareResponse;
+
+    // User subdomain inference traffic stays on the Worker edge instead of the app container.
+    const userMachineResponse = await userMachineV1Request(request, env);
+    if (userMachineResponse) return userMachineResponse;
 
     const usernameStatusResponse = await usernameStatusRequest(request, env);
     if (usernameStatusResponse) return usernameStatusResponse;
