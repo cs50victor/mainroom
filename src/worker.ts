@@ -39,7 +39,6 @@ const machinePath = "/v0/machines";
 const signedConfigTtlSeconds = 10 * 60;
 const signedAuthJsonTtlSeconds = 30 * 24 * 60 * 60;
 const jsonUploadNamePattern = /^[A-Za-z0-9._@+-]{1,160}\.json$/;
-const codexChatgptModels = ["gpt-5.3-codex"];
 const s3ListParser = new XMLParser();
 
 /*
@@ -1495,7 +1494,7 @@ async function renderTokenproxyConfig(
       id: `codex:${uploadName.replace(/\.json$/, "")}`,
       kind: "chatgpt_codex_auth_json",
       auth_json_path: authJsonUrl,
-      models: codexChatgptModels,
+      base_url: "https://chatgpt.com/backend-api/codex",
       supports_responses: true,
       supports_responses_ws: true,
       supports_compact: true,
