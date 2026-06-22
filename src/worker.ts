@@ -1,6 +1,9 @@
 import { Container, getContainer, getRandom } from "@cloudflare/containers";
+import { AwsClient } from "aws4fetch";
 import { DurableObject } from "cloudflare:workers";
+import { XMLParser } from "fast-xml-parser";
 import { Hono, type Context } from "hono";
+import { stringify as stringifyToml } from "smol-toml";
 
 import {
   bearerToken,
@@ -33,6 +36,10 @@ import {
 const rootHost = "mainroom.sh";
 const instanceCount = 3;
 const machinePath = "/v0/machines";
+const signedConfigTtlSeconds = 10 * 60;
+const signedAuthJsonTtlSeconds = 30 * 24 * 60 * 60;
+const jsonUploadNamePattern = /^[A-Za-z0-9._@+-]{1,160}\.json$/;
+const s3ListParser = new XMLParser();
 
 /*
  * tokenproxy is the inference data plane; Mainroom only starts it and routes to it.
@@ -73,6 +80,8 @@ const machinePath = "/v0/machines";
 const tokenproxyRuntimeVersion = "v0.1.14";
 const tokenproxyEntrypoint = [
   "tokenproxy",
+  "--config",
+  "__MAINROOM_SIGNED_CONFIG_URL__",
   "-c",
   "server.bind='0.0.0.0:8787'",
   "-c",
@@ -390,7 +399,12 @@ export class UserMachineContainer extends Container<Env> {
     );
     if (!record) return { restarted: false };
 
-    // Grant changes alter consumer-visible tokenproxy config; restart is the current reload primitive.
+    const reload = await this.reloadConfig(record);
+    if (reload.reloaded) {
+      return { restarted: false };
+    }
+
+    // Restart remains the fallback when tokenproxy reports restart_required or reload is unavailable.
     await this.destroy();
     await this.startMachine(record);
 
@@ -428,17 +442,61 @@ export class UserMachineContainer extends Container<Env> {
           ...this.envVars,
           ...s3EnvVars(this.env),
           TOKENPROXY_CLIENT_KEY: secret,
+          TOKENPROXY_ADMIN_KEY: secret,
           TOKENPROXY_CONFIG_UPDATE_ENDPOINT: `https://${rootHost}/v0/tokenproxy/auth-json/refresh`,
           USER_MACHINE_ID: record.id,
           USER_SUBJECT: record.subject,
         },
-        entrypoint: tokenproxyEntrypoint,
+        entrypoint: [
+          ...tokenproxyEntrypoint.slice(0, 2),
+          await signedMainroomUrl(
+            this.env,
+            `/v0/tokenproxy/config/${encodeURIComponent(record.subject)}.toml`,
+            signedConfigTtlSeconds,
+          ),
+          ...tokenproxyEntrypoint.slice(3),
+        ],
         labels: {
           machine: record.id,
           subject: record.subject,
         },
       },
     });
+  }
+
+  private async reloadConfig(
+    record: UserMachineRecord,
+  ): Promise<{ reloaded: boolean }> {
+    const { secret } = await getApiKeySecret(
+      workerAppConfig(this.env),
+      record.apiKeyId,
+    );
+    const configUrl = await signedMainroomUrl(
+      this.env,
+      `/v0/tokenproxy/config/${encodeURIComponent(record.subject)}.toml`,
+      signedConfigTtlSeconds,
+    );
+    const body = JSON.stringify({
+      revision: Date.now(),
+      config_url: configUrl,
+    });
+    const request = new Request("https://tokenproxy/admin/config/reload", {
+      body,
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+    });
+
+    try {
+      const response = await super.fetch(tokenproxyRequest(request, secret));
+      if (!response.ok) return { reloaded: false };
+
+      const result = (await response.json()) as { reloaded?: unknown };
+      return { reloaded: result.reloaded === true };
+    } catch {
+      return { reloaded: false };
+    }
   }
 }
 
@@ -851,6 +909,57 @@ async function shareGrantResponse(
   return json(result, response.status);
 }
 
+async function reloadOwnTokenproxyConfig(c: WorkerContext): Promise<Response> {
+  const apiKey = await verifiedApiKey(workerAppConfig(c.env), c.req.raw);
+  if (!apiKey) return c.json({ error: "Unauthorized" }, 401);
+
+  const reconcile = await ensureConsumerMachine(
+    c.env,
+    apiKey.subject,
+    apiKey.id,
+  );
+  console.log("tokenproxy_config_reconcile", {
+    subject: apiKey.subject,
+    ...reconcile,
+  });
+
+  return c.json(reconcile);
+}
+
+async function signedTokenproxyConfig(c: WorkerContext): Promise<Response> {
+  const subject = decodeURIComponent(c.req.param("subject") ?? "").replace(
+    /\.toml$/,
+    "",
+  );
+  if (!subject) return c.json({ error: "subject is required" }, 400);
+
+  if (!(await verifySignedMainroomUrl(c.env, c.req.raw))) {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+
+  const config = await renderTokenproxyConfig(c.env, subject);
+  if ("error" in config) return c.json({ error: config.error }, config.status);
+
+  return text(config.toml, 200, "application/toml; charset=utf-8");
+}
+
+async function signedAuthJson(c: WorkerContext): Promise<Response> {
+  const subject = decodeURIComponent(c.req.param("subject") ?? "");
+  const uploadName = decodeURIComponent(c.req.param("uploadName") ?? "");
+  if (!subject || !isJsonUploadName(uploadName)) {
+    return c.json({ error: "Auth JSON object not found" }, 404);
+  }
+
+  if (!(await verifySignedMainroomUrl(c.env, c.req.raw))) {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+
+  const object = await s3ReadObject(c.env, jsonUploadKey(subject, uploadName));
+  if ("error" in object) return c.json({ error: object.error }, object.status);
+
+  return text(object.text, 200, "application/json; charset=utf-8");
+}
+
 async function usernameStatus(c: WorkerContext): Promise<Response> {
   const username = usernameFromMainroomHost(new URL(c.req.url).hostname);
   if (!username) return mainroomContainerRequest(c.req.raw, c.env);
@@ -940,11 +1049,18 @@ async function verifiedApiKeySubject(
   config: ReturnType<typeof workerAppConfig>,
   request: Request,
 ): Promise<string | undefined> {
+  return (await verifiedApiKey(config, request))?.subject;
+}
+
+async function verifiedApiKey(
+  config: ReturnType<typeof workerAppConfig>,
+  request: Request,
+): Promise<Awaited<ReturnType<typeof verifyApiKey>> | undefined> {
   const token = bearerToken(request);
   if (!token) return undefined;
 
   try {
-    return (await verifyApiKey(config, { secret: token })).subject;
+    return await verifyApiKey(config, { secret: token });
   } catch {
     return undefined;
   }
@@ -966,6 +1082,22 @@ async function reconcileConsumerMachine(
   );
 
   return machine.restartForShareChange();
+}
+
+async function ensureConsumerMachine(
+  env: Env,
+  subject: string,
+  apiKeyId: string,
+): Promise<{ created: boolean; restarted: boolean }> {
+  const id = machineId(subject);
+  const machine = getContainer(env.USER_MACHINE_CONTAINER, id);
+  const info = await machine.info();
+  if (info.subject) {
+    return { created: false, ...(await machine.restartForShareChange()) };
+  }
+
+  await machine.create({ apiKeyId, id, subject });
+  return { created: true, restarted: false };
 }
 
 async function releaseShareGrant(env: Env, grantId: string): Promise<void> {
@@ -1147,17 +1279,329 @@ function optionalEnvVars(
   return envVars;
 }
 
+async function s3ListJsonUploads(
+  env: Env,
+  subject: string,
+): Promise<{ names: string[] } | { error: string; status: 502 }> {
+  const prefix = `uploads/json/${encodeURIComponent(subject)}/`;
+  const result = await s3Fetch(env, "", {
+    query: { "list-type": "2", prefix },
+  });
+  if ("error" in result) return result;
+  if (!result.response.ok) {
+    return { error: "S3 upload list failed", status: 502 };
+  }
+
+  const xml = await result.response.text();
+  const parsed = s3ListParser.parse(xml) as {
+    ListBucketResult?: { Contents?: unknown };
+  };
+  const contents = Array.isArray(parsed.ListBucketResult?.Contents)
+    ? parsed.ListBucketResult.Contents
+    : parsed.ListBucketResult?.Contents
+      ? [parsed.ListBucketResult.Contents]
+      : [];
+  const names = contents
+    .map((content) =>
+      content && typeof content === "object"
+        ? (content as Record<string, unknown>).Key
+        : undefined,
+    )
+    .filter((key): key is string => typeof key === "string")
+    .filter((key) => key.startsWith(prefix))
+    .map((key) => key.slice(prefix.length))
+    .filter(isJsonUploadName)
+    .sort();
+
+  return { names };
+}
+
+async function s3ReadObject(
+  env: Env,
+  key: string,
+): Promise<{ text: string } | { error: string; status: 404 | 502 }> {
+  const result = await s3Fetch(env, key);
+  if ("error" in result) return result;
+  if (result.response.status === 404) {
+    return { error: "Auth JSON object not found", status: 404 };
+  }
+  if (!result.response.ok) {
+    return { error: "S3 object read failed", status: 502 };
+  }
+
+  return { text: await result.response.text() };
+}
+
+async function s3Fetch(
+  env: Env,
+  key: string,
+  options: { query?: Record<string, string> } = {},
+): Promise<{ response: Response } | { error: string; status: 502 }> {
+  const bucket = env.S3_BUCKET ?? env.AWS_BUCKET;
+  const endpoint =
+    env.S3_ENDPOINT ?? env.AWS_ENDPOINT_URL_S3 ?? env.AWS_ENDPOINT;
+  const region =
+    env.S3_REGION ?? env.AWS_REGION ?? env.AWS_DEFAULT_REGION ?? "auto";
+  const accessKeyId = env.S3_ACCESS_KEY_ID ?? env.AWS_ACCESS_KEY_ID;
+  const secretAccessKey = env.S3_SECRET_ACCESS_KEY ?? env.AWS_SECRET_ACCESS_KEY;
+  const sessionToken = env.S3_SESSION_TOKEN ?? env.AWS_SESSION_TOKEN;
+  if (!bucket || !endpoint || !accessKeyId || !secretAccessKey) {
+    return { error: "S3 bucket is not configured", status: 502 };
+  }
+
+  const base = endpoint.replace(/\/+$/, "");
+  const encodedBucket = encodeS3PathPart(bucket);
+  const encodedKey = key
+    .split("/")
+    .filter(Boolean)
+    .map(encodeS3PathPart)
+    .join("/");
+  const path = encodedKey
+    ? `/${encodedBucket}/${encodedKey}`
+    : `/${encodedBucket}`;
+  const url = new URL(`${base}${path}`);
+  for (const [name, value] of Object.entries(options.query ?? {})) {
+    url.searchParams.set(name, value);
+  }
+
+  const aws = new AwsClient({
+    accessKeyId,
+    secretAccessKey,
+    sessionToken,
+    service: "s3",
+    region,
+  });
+
+  try {
+    return { response: await aws.fetch(url.toString(), { method: "GET" }) };
+  } catch {
+    return { error: "S3 object read failed", status: 502 };
+  }
+}
+
+async function hmacHex(secret: string, message: string): Promise<string> {
+  return bytesToHex(await hmacBytes(utf8(secret), message));
+}
+
+async function hmacBytes(
+  secret: BufferSource,
+  message: string,
+): Promise<ArrayBuffer> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    secret,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  return crypto.subtle.sign("HMAC", key, utf8(message));
+}
+
+function utf8(value: string): Uint8Array {
+  return new TextEncoder().encode(value);
+}
+
+function bytesToHex(bytes: ArrayBuffer): string {
+  return [...new Uint8Array(bytes)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function encodeS3PathPart(value: string): string {
+  return encodeURIComponent(value).replace(/%2F/g, "/");
+}
+
+function jsonUploadKey(userId: string, uploadName: string): string {
+  return `uploads/json/${encodeURIComponent(userId)}/${uploadName}`;
+}
+
+function isJsonUploadName(value: string): boolean {
+  return jsonUploadNamePattern.test(value);
+}
+
 function json(body: unknown, status = 200): Response {
   return Response.json(body, { status });
 }
 
-function text(body: string, status = 200): Response {
+function text(
+  body: string,
+  status = 200,
+  contentType = "text/plain; charset=utf-8",
+): Response {
   return new Response(body, {
     status,
     headers: {
-      "content-type": "text/plain; charset=utf-8",
+      "content-type": contentType,
     },
   });
+}
+
+async function renderTokenproxyConfig(
+  env: Env,
+  subject: string,
+): Promise<{ toml: string } | { error: string; status: 502 }> {
+  const uploads = await s3ListJsonUploads(env, subject);
+  if ("error" in uploads) return uploads;
+
+  const shareResponse = await shareStore(env).fetch(
+    new Request(
+      `https://share-store/consumers?consumerSubject=${encodeURIComponent(subject)}`,
+    ),
+  );
+  if (!shareResponse.ok) {
+    return { error: "Share grants are not available", status: 502 };
+  }
+  const shares = (await shareResponse.json()) as {
+    tokenproxy_accounts?: unknown;
+  };
+  const peerAccounts = Array.isArray(shares.tokenproxy_accounts)
+    ? (shares.tokenproxy_accounts as Array<Record<string, unknown>>)
+    : [];
+
+  const config = {
+    server: {
+      id: `tokenproxy-${subject}`,
+    },
+    admin_auth: {
+      token_env: "TOKENPROXY_ADMIN_KEY",
+    },
+    downstream_auth: {
+      mode: "bearer",
+      token_env: "TOKENPROXY_CLIENT_KEY",
+    },
+    accounts: [] as Array<Record<string, unknown>>,
+  };
+
+  for (const uploadName of uploads.names) {
+    const authJsonUrl = await signedMainroomUrl(
+      env,
+      `/v0/tokenproxy/auth-json/${encodeURIComponent(subject)}/${encodeURIComponent(uploadName)}`,
+      signedAuthJsonTtlSeconds,
+    );
+    config.accounts.push({
+      id: `codex:${uploadName.replace(/\.json$/, "")}`,
+      kind: "chatgpt_codex_auth_json",
+      auth_json_path: authJsonUrl,
+      supports_responses: true,
+      supports_responses_ws: true,
+      supports_compact: true,
+    });
+  }
+
+  for (const account of peerAccounts) {
+    config.accounts.push(peerAccountConfig(account));
+  }
+
+  return { toml: stringifyToml(config) };
+}
+
+function peerAccountConfig(
+  account: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    id: stringFromRecord(account, "id"),
+    kind: stringFromRecord(account, "kind"),
+    base_url: stringFromRecord(account, "base_url"),
+    priority: integerFromRecord(account, "priority", 50),
+    models: stringArray(account.models),
+    supports_chat_completions: booleanFromRecord(
+      account,
+      "supports_chat_completions",
+    ),
+    supports_responses: booleanFromRecord(account, "supports_responses"),
+    supports_responses_ws: booleanFromRecord(account, "supports_responses_ws"),
+    supports_compact: booleanFromRecord(account, "supports_compact"),
+    supports_anthropic_messages: booleanFromRecord(
+      account,
+      "supports_anthropic_messages",
+    ),
+    service_tiers: stringArray(account.service_tiers),
+  };
+}
+
+function stringFromRecord(
+  record: Record<string, unknown>,
+  key: string,
+): string {
+  const value = record[key];
+  return typeof value === "string" ? value : "";
+}
+
+function booleanFromRecord(
+  record: Record<string, unknown>,
+  key: string,
+): boolean {
+  return record[key] === true;
+}
+
+function integerFromRecord(
+  record: Record<string, unknown>,
+  key: string,
+  fallback: number,
+): number {
+  const value = record[key];
+  return typeof value === "number" && Number.isInteger(value)
+    ? value
+    : fallback;
+}
+
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+async function signedMainroomUrl(
+  env: Env,
+  pathname: string,
+  ttlSeconds: number,
+): Promise<string> {
+  const expires = Math.floor(Date.now() / 1000) + ttlSeconds;
+  const signature = await mainroomSignature(env, "GET", pathname, expires);
+  const url = new URL(`https://${rootHost}${pathname}`);
+  url.searchParams.set("expires", expires.toString());
+  url.searchParams.set("signature", signature);
+  return url.toString();
+}
+
+async function verifySignedMainroomUrl(
+  env: Env,
+  request: Request,
+): Promise<boolean> {
+  const url = new URL(request.url);
+  const expires = Number.parseInt(url.searchParams.get("expires") ?? "", 10);
+  const signature = url.searchParams.get("signature") ?? "";
+  if (!Number.isInteger(expires) || expires < Math.floor(Date.now() / 1000)) {
+    return false;
+  }
+
+  const expected = await mainroomSignature(
+    env,
+    request.method,
+    url.pathname,
+    expires,
+  );
+  return constantTimeEqual(signature, expected);
+}
+
+async function mainroomSignature(
+  env: Env,
+  method: string,
+  pathname: string,
+  expires: number,
+): Promise<string> {
+  return hmacHex(
+    env.MACHINE_CONTROL_TOKEN,
+    `${method.toUpperCase()}\n${pathname}\n${expires}`,
+  );
+}
+
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let index = 0; index < a.length; index += 1) {
+    diff |= a.charCodeAt(index) ^ b.charCodeAt(index);
+  }
+  return diff === 0;
 }
 
 function usernameStatusText(username: string, status: "available" | "taken") {
@@ -1206,6 +1650,15 @@ workerApp.all(
 );
 workerApp.all("/v0/shares/providers/*", (c) =>
   c.json({ error: "Not found" }, 404),
+);
+workerApp.post("/v0/tokenproxy/config/reload", reloadOwnTokenproxyConfig);
+workerApp.all("/v0/tokenproxy/config/reload", methodNotAllowed);
+workerApp.get("/v0/tokenproxy/config/:subject", signedTokenproxyConfig);
+workerApp.all("/v0/tokenproxy/config/:subject", methodNotAllowed);
+workerApp.get("/v0/tokenproxy/auth-json/:subject/:uploadName", signedAuthJson);
+workerApp.all(
+  "/v0/tokenproxy/auth-json/:subject/:uploadName",
+  methodNotAllowed,
 );
 workerApp.all("/v1/*", async (c) => {
   const response = await userMachineV1Request(c.req.raw, c.env);

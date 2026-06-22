@@ -103,6 +103,21 @@ export async function uploadJson(
   });
 }
 
+export async function reloadTokenproxyConfig(
+  apiUrl: string,
+  token: string,
+): Promise<RequestResult<{ created: boolean; restarted: boolean }>> {
+  return requestJson(
+    apiUrl,
+    "/v0/tokenproxy/config/reload",
+    z.object({ created: z.boolean(), restarted: z.boolean() }),
+    {
+      method: "POST",
+      token,
+    },
+  );
+}
+
 async function requestJson<T>(
   apiUrl: string,
   path: string,
