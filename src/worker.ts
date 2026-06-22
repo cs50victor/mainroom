@@ -14,6 +14,7 @@ import {
 } from "./helpers";
 import { apiKeySchema } from "./schemas/api-keys";
 import {
+  inFlightKey,
   normalizeShareGrantInput,
   parsePeerRequestScope,
   providerConsumerKey,
@@ -67,7 +68,7 @@ const machinePath = "/v0/machines";
  *   https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/operations/draining
  *   https://nginx.org/en/docs/control.html
  */
-const tokenproxyRuntimeVersion = "v0.1.12";
+const tokenproxyRuntimeVersion = "v0.1.14";
 const tokenproxyEntrypoint = [
   "tokenproxy",
   "-c",
@@ -266,31 +267,59 @@ export class ShareGrantStore extends DurableObject<Env> {
       }
 
       const requestLimit = grant.limits?.requestsPerDay;
+      const requestKey = usageKey(grant.grantId);
       if (requestLimit) {
-        const key = usageKey(grant.grantId);
-        const used = (await this.ctx.storage.get<number>(key)) ?? 0;
+        const used = (await this.ctx.storage.get<number>(requestKey)) ?? 0;
         if (used >= requestLimit) {
           console.log("share_grant_cap_deny", auditGrant(grant));
           return json({ error: "Daily request cap exhausted" }, 429);
+        }
+      }
+
+      const tokenLimit = grant.limits?.tokensPerDay ?? 0;
+      const tokenKey =
+        tokenLimit && scope.requestedTokens
+          ? `${requestKey}:tokens`
+          : undefined;
+      let tokenUsed = 0;
+      if (tokenKey) {
+        tokenUsed = (await this.ctx.storage.get<number>(tokenKey)) ?? 0;
+        if (tokenUsed + scope.requestedTokens > tokenLimit) {
+          console.log("share_grant_cap_deny", auditGrant(grant));
+          return json({ error: "Daily token cap exhausted" }, 429);
+        }
+      }
+
+      const concurrentLimit = grant.limits?.maxConcurrentRequests;
+      if (concurrentLimit) {
+        const key = inFlightKey(grant.grantId);
+        const used = (await this.ctx.storage.get<number>(key)) ?? 0;
+        if (used >= concurrentLimit) {
+          console.log("share_grant_cap_deny", auditGrant(grant));
+          return json({ error: "Concurrent request cap exhausted" }, 429);
         }
 
         await this.ctx.storage.put(key, used + 1);
       }
 
-      const tokenLimit = grant.limits?.tokensPerDay;
-      if (tokenLimit && scope.requestedTokens) {
-        const key = `${usageKey(grant.grantId)}:tokens`;
-        const used = (await this.ctx.storage.get<number>(key)) ?? 0;
-        if (used + scope.requestedTokens > tokenLimit) {
-          console.log("share_grant_cap_deny", auditGrant(grant));
-          return json({ error: "Daily token cap exhausted" }, 429);
-        }
-
-        await this.ctx.storage.put(key, used + scope.requestedTokens);
+      if (tokenKey) {
+        await this.ctx.storage.put(tokenKey, tokenUsed + scope.requestedTokens);
       }
-
+      await this.ctx.storage.put(
+        requestKey,
+        ((await this.ctx.storage.get<number>(requestKey)) ?? 0) + 1,
+      );
       console.log("share_grant_allow", auditGrant(grant));
       return json({ grantId: grant.grantId });
+    }
+
+    if (request.method === "POST" && url.pathname === "/release") {
+      const body = await readJson(request);
+      const key = inFlightKey(stringField(body.grantId));
+      const used = (await this.ctx.storage.get<number>(key)) ?? 0;
+      await this.ctx.storage.put(key, Math.max(0, used - 1));
+
+      return json({ released: true });
     }
 
     return json({ error: "Not found" }, 404);
@@ -473,14 +502,23 @@ async function userMachineV1Request(
   const machine = getContainer(env.USER_MACHINE_CONTAINER, machineId(subject));
 
   // Container.fetch, not containerFetch, preserves WebSocket upgrades for /v1/responses.
-  return machine.fetch(request);
+  try {
+    return releaseGrantWhenDone(
+      env,
+      auth.grantId,
+      await machine.fetch(request),
+    );
+  } catch (error) {
+    if (auth.grantId) await releaseShareGrant(env, auth.grantId);
+    throw error;
+  }
 }
 
 async function providerEdgeAuth(
   request: Request,
   env: Env,
   providerSubject: string,
-): Promise<{ consumerSubject: string } | Response> {
+): Promise<{ consumerSubject: string; grantId?: string } | Response> {
   const token = bearerToken(request);
   if (!token) {
     console.log("share_grant_deny", {
@@ -519,7 +557,10 @@ async function providerEdgeAuth(
     return json(await response.json(), response.status);
   }
 
-  return { consumerSubject };
+  const result = (await response.json()) as { grantId?: unknown };
+  const grantId =
+    typeof result.grantId === "string" ? result.grantId : undefined;
+  return { consumerSubject, grantId };
 }
 
 async function machineRequest(
@@ -890,6 +931,35 @@ async function reconcileConsumerMachine(
   );
 
   return machine.restartForShareChange();
+}
+
+async function releaseShareGrant(env: Env, grantId: string): Promise<void> {
+  await shareStore(env).fetch(
+    new Request("https://share-store/release", {
+      method: "POST",
+      body: JSON.stringify({ grantId }),
+    }),
+  );
+}
+
+function releaseGrantWhenDone(
+  env: Env,
+  grantId: string | undefined,
+  response: Response,
+): Response {
+  if (!grantId) return response;
+
+  if (!response.body) {
+    void releaseShareGrant(env, grantId);
+    return response;
+  }
+
+  const stream = new TransformStream();
+  response.body.pipeTo(stream.writable).finally(() => {
+    void releaseShareGrant(env, grantId);
+  });
+
+  return new Response(stream.readable, response);
 }
 
 function shareIdentityFrom(value: unknown): {

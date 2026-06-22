@@ -182,6 +182,10 @@ export function usageKey(grantId: string): string {
   return `usage:${grantId}:${new Date().toISOString().slice(0, 10)}`;
 }
 
+export function inFlightKey(grantId: string): string {
+  return `inflight:${grantId}`;
+}
+
 export function stripUntrustedPeerHeaders(headers: Headers): void {
   for (const name of [...headers.keys()]) {
     if (name.toLowerCase().startsWith("x-mainroom-peer-")) {
