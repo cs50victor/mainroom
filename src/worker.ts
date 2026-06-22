@@ -1,5 +1,6 @@
 import { Container, getContainer, getRandom } from "@cloudflare/containers";
 import { DurableObject } from "cloudflare:workers";
+import { Hono, type Context } from "hono";
 
 import {
   bearerToken,
@@ -119,6 +120,15 @@ type UserMachineRecord = {
   id: string;
   subject: string;
 };
+
+type WorkerHonoEnv = {
+  Bindings: Env;
+  Variables: {
+    providerSubject: string;
+  };
+};
+
+type WorkerContext = Context<WorkerHonoEnv>;
 
 export class MainroomContainer extends Container<Env> {
   defaultPort = 3000;
@@ -550,289 +560,316 @@ async function providerEdgeAuth(
   return { consumerSubject, grantId };
 }
 
-async function machineRequest(
-  request: Request,
-  env: Env,
-): Promise<Response | undefined> {
-  const url = new URL(request.url);
-
-  if (
-    url.pathname !== machinePath &&
-    !url.pathname.startsWith(`${machinePath}/`)
-  ) {
-    return undefined;
-  }
-
-  const auth = authorizeMachineRequest(request, env);
+async function createMachine(c: WorkerContext): Promise<Response> {
+  const auth = authorizeMachineRequest(c.req.raw, c.env);
   if (auth) return auth;
 
-  if (request.method === "POST" && url.pathname === machinePath) {
-    const body = await readJson(request);
-    const apiKeyId =
-      typeof body.apiKeyId === "string" ? body.apiKeyId.trim() : "";
-    const subject = typeof body.subject === "string" ? body.subject.trim() : "";
+  const body = await requestJson(c);
+  const apiKeyId =
+    typeof body.apiKeyId === "string" ? body.apiKeyId.trim() : "";
+  const subject = typeof body.subject === "string" ? body.subject.trim() : "";
 
-    if (!apiKeyId) {
-      return json({ error: "apiKeyId is required" }, 400);
+  if (!apiKeyId) {
+    return c.json({ error: "apiKeyId is required" }, 400);
+  }
+
+  if (!subject) {
+    return c.json({ error: "subject is required" }, 400);
+  }
+
+  const id = machineId(subject);
+  const machine = getContainer(c.env.USER_MACHINE_CONTAINER, id);
+
+  return c.json(
+    await machine.create({
+      apiKeyId,
+      id,
+      subject,
+    }),
+  );
+}
+
+async function machineInfo(c: WorkerContext): Promise<Response> {
+  const auth = authorizeMachineRequest(c.req.raw, c.env);
+  if (auth) return auth;
+
+  const machine = getMachine(c);
+  if (machine instanceof Response) return machine;
+
+  return c.json(await machine.stub.info());
+}
+
+async function deleteMachine(c: WorkerContext): Promise<Response> {
+  const auth = authorizeMachineRequest(c.req.raw, c.env);
+  if (auth) return auth;
+
+  const machine = getMachine(c);
+  if (machine instanceof Response) return machine;
+
+  await machine.stub.delete();
+  return c.json({ id: machine.id, deleted: true });
+}
+
+function getMachine(c: WorkerContext):
+  | {
+      id: string;
+      stub: DurableObjectStub<UserMachineContainer>;
     }
+  | Response {
+  const id = c.req.param("id")?.trim() ?? "";
+  if (!id) return c.json({ error: "machine id is required" }, 400);
 
-    if (!subject) {
-      return json({ error: "subject is required" }, 400);
-    }
+  return {
+    id,
+    stub: getContainer(c.env.USER_MACHINE_CONTAINER, id),
+  };
+}
 
-    const id = machineId(subject);
-    const machine = getContainer(env.USER_MACHINE_CONTAINER, id);
+function machineMethodNotAllowed(c: WorkerContext): Response {
+  const auth = authorizeMachineRequest(c.req.raw, c.env);
+  if (auth) return auth;
 
-    return json(
-      await machine.create({
-        apiKeyId,
-        id,
-        subject,
-      }),
+  return c.json({ error: "Method not allowed" }, 405);
+}
+
+function machineNotFound(c: WorkerContext): Response {
+  const auth = authorizeMachineRequest(c.req.raw, c.env);
+  if (auth) return auth;
+
+  return c.json({ error: "Not found" }, 404);
+}
+
+function cliAuthConfig(c: WorkerContext): Response {
+  if (
+    !c.env.CLERK_OAUTH_AUTHORIZE_URL ||
+    !c.env.CLERK_OAUTH_CLIENT_ID ||
+    !c.env.CLERK_OAUTH_TOKEN_URL
+  ) {
+    return c.json(
+      { error: "Browser login is not configured for this Mainroom instance" },
+      501,
     );
   }
 
-  const match = url.pathname.match(/^\/v0\/machines\/([^/]+)$/);
-  if (!match) return json({ error: "Not found" }, 404);
-
-  const id = decodeURIComponent(match[1] ?? "");
-  if (!id) return json({ error: "machine id is required" }, 400);
-
-  const machine = getContainer(env.USER_MACHINE_CONTAINER, id);
-
-  if (request.method === "GET") {
-    return json(await machine.info());
-  }
-
-  if (request.method === "DELETE") {
-    await machine.delete();
-    return json({ id, deleted: true });
-  }
-
-  return json({ error: "Method not allowed" }, 405);
+  return c.json({
+    authorizeUrl: c.env.CLERK_OAUTH_AUTHORIZE_URL,
+    clientId: c.env.CLERK_OAUTH_CLIENT_ID,
+    tokenUrl: c.env.CLERK_OAUTH_TOKEN_URL,
+  });
 }
 
-async function cliAuthRequest(
-  request: Request,
-  env: Env,
-): Promise<Response | undefined> {
-  const url = new URL(request.url);
+async function cliAuthExchange(c: WorkerContext): Promise<Response> {
+  try {
+    const config = workerAppConfig(c.env);
+    const body = await requestJson(c);
+    const result = await createCliApiKey(config, c.req.raw, body.username);
+    const apiKey = apiKeySchema.parse(result.apiKey);
 
-  if (
-    url.pathname !== "/v0/auth/cli/config" &&
-    url.pathname !== "/v0/auth/cli/exchange"
-  ) {
-    return undefined;
-  }
-
-  if (request.method === "GET" && url.pathname === "/v0/auth/cli/config") {
-    if (
-      !env.CLERK_OAUTH_AUTHORIZE_URL ||
-      !env.CLERK_OAUTH_CLIENT_ID ||
-      !env.CLERK_OAUTH_TOKEN_URL
-    ) {
-      return json(
-        { error: "Browser login is not configured for this Mainroom instance" },
-        501,
+    if (!apiKey.secret) {
+      return c.json(
+        { error: "Mainroom could not create a CLI credential" },
+        502,
       );
     }
 
-    return json({
-      authorizeUrl: env.CLERK_OAUTH_AUTHORIZE_URL,
-      clientId: env.CLERK_OAUTH_CLIENT_ID,
-      tokenUrl: env.CLERK_OAUTH_TOKEN_URL,
+    return c.json({
+      apiKey: {
+        id: apiKey.id,
+        subject: apiKey.subject,
+        secret: apiKey.secret,
+      },
+      username: result.username,
+    });
+  } catch (error) {
+    const response = cliAuthError(error);
+    return c.json({ error: response.error }, response.status);
+  }
+}
+
+function methodNotAllowed(c: WorkerContext): Response {
+  return c.json({ error: "Method not allowed" }, 405);
+}
+
+async function requireShareProvider(
+  c: WorkerContext,
+  next: () => Promise<void>,
+): Promise<Response | void> {
+  const providerSubject = await verifiedApiKeySubject(
+    workerAppConfig(c.env),
+    c.req.raw,
+  );
+  if (!providerSubject) return json({ error: "Unauthorized" }, 401);
+
+  c.set("providerSubject", providerSubject);
+  await next();
+}
+
+async function listShareProviders(c: WorkerContext): Promise<Response> {
+  const response = await shareStore(c.env).fetch(
+    new Request(
+      `https://share-store/providers?providerSubject=${encodeURIComponent(c.var.providerSubject)}`,
+    ),
+  );
+
+  return json(await response.json(), response.status);
+}
+
+async function listConsumerShares(c: WorkerContext): Promise<Response> {
+  const response = await shareStore(c.env).fetch(
+    new Request(
+      `https://share-store/consumers?consumerSubject=${encodeURIComponent(c.var.providerSubject)}`,
+    ),
+  );
+
+  return json(await response.json(), response.status);
+}
+
+async function upsertProviderShare(c: WorkerContext): Promise<Response> {
+  const context = await providerConsumerShare(c);
+  if (context instanceof Response) return context;
+
+  const providerUsername = await getCliSubjectUsername(
+    context.config,
+    context.providerSubject,
+  );
+  if (!providerUsername) {
+    return c.json({ error: "Provider username not found" }, 404);
+  }
+
+  const input = normalizeShareGrantInput(await requestJson(c));
+  if ("error" in input) return c.json({ error: input.error }, 400);
+
+  const response = await shareStore(c.env).fetch(
+    new Request("https://share-store/grants", {
+      method: "PUT",
+      body: JSON.stringify({
+        identity: {
+          consumerSubject: context.consumerSubject,
+          consumerUsername: context.consumerUsername,
+          providerSubject: context.providerSubject,
+          providerUsername,
+        },
+        input,
+      }),
+    }),
+  );
+
+  return shareGrantResponse(c, response, context);
+}
+
+async function deleteProviderShare(c: WorkerContext): Promise<Response> {
+  const context = await providerConsumerShare(c);
+  if (context instanceof Response) return context;
+
+  const response = await shareStore(c.env).fetch(
+    new Request("https://share-store/grants", {
+      method: "DELETE",
+      body: JSON.stringify({
+        consumerSubject: context.consumerSubject,
+        providerSubject: context.providerSubject,
+      }),
+    }),
+  );
+
+  return shareGrantResponse(c, response, context);
+}
+
+async function updateProviderShare(c: WorkerContext): Promise<Response> {
+  const context = await providerConsumerShare(c);
+  if (context instanceof Response) return context;
+
+  const body = await requestJson(c);
+  if (body.status !== "active" && body.status !== "disabled") {
+    return c.json({ error: "status must be active or disabled" }, 400);
+  }
+
+  const response = await shareStore(c.env).fetch(
+    new Request("https://share-store/grants", {
+      method: "PATCH",
+      body: JSON.stringify({
+        consumerSubject: context.consumerSubject,
+        providerSubject: context.providerSubject,
+        status: body.status,
+      }),
+    }),
+  );
+
+  return shareGrantResponse(c, response, context);
+}
+
+async function providerShareMethodNotAllowed(
+  c: WorkerContext,
+): Promise<Response> {
+  const context = await providerConsumerShare(c);
+  if (context instanceof Response) return context;
+
+  return c.json({ error: "Method not allowed" }, 405);
+}
+
+type ProviderConsumerShareContext = {
+  config: ReturnType<typeof workerAppConfig>;
+  consumerSubject: string;
+  consumerUsername: string;
+  providerSubject: string;
+};
+
+async function providerConsumerShare(
+  c: WorkerContext,
+): Promise<ProviderConsumerShareContext | Response> {
+  const config = workerAppConfig(c.env);
+  const consumerUsername = c.req.param("consumerUsername")?.trim() ?? "";
+  const consumerSubject = await getCliUsernameSubject(config, consumerUsername);
+  if (!consumerSubject) return c.json({ error: "Consumer not found" }, 404);
+
+  return {
+    config,
+    consumerSubject,
+    consumerUsername,
+    providerSubject: c.var.providerSubject,
+  };
+}
+
+async function shareGrantResponse(
+  c: WorkerContext,
+  response: Response,
+  context: ProviderConsumerShareContext,
+): Promise<Response> {
+  const result = await response.json();
+
+  if (response.ok) {
+    const reconcile = await reconcileConsumerMachine(
+      c.env,
+      context.consumerSubject,
+    );
+    console.log("share_grant_reconcile", {
+      consumerSubject: context.consumerSubject,
+      providerSubject: context.providerSubject,
+      ...reconcile,
     });
   }
 
-  if (request.method === "POST" && url.pathname === "/v0/auth/cli/exchange") {
-    try {
-      const config = workerAppConfig(env);
-      const body = await readJson(request.clone());
-      const result = await createCliApiKey(config, request, body.username);
-      const apiKey = apiKeySchema.parse(result.apiKey);
-
-      if (!apiKey.secret) {
-        return json(
-          { error: "Mainroom could not create a CLI credential" },
-          502,
-        );
-      }
-
-      return json({
-        apiKey: {
-          id: apiKey.id,
-          subject: apiKey.subject,
-          secret: apiKey.secret,
-        },
-        username: result.username,
-      });
-    } catch (error) {
-      const response = cliAuthError(error);
-      return json({ error: response.error }, response.status);
-    }
-  }
-
-  return json({ error: "Method not allowed" }, 405);
+  return json(result, response.status);
 }
 
-async function shareRequest(
-  request: Request,
-  env: Env,
-): Promise<Response | undefined> {
-  const url = new URL(request.url);
-  if (
-    url.pathname !== "/v0/shares/providers" &&
-    url.pathname !== "/v0/shares/consumers/me" &&
-    !url.pathname.startsWith("/v0/shares/providers/")
-  ) {
-    return undefined;
-  }
+async function usernameStatus(c: WorkerContext): Promise<Response> {
+  const username = usernameFromMainroomHost(new URL(c.req.url).hostname);
+  if (!username) return mainroomContainerRequest(c.req.raw, c.env);
 
-  const config = workerAppConfig(env);
-  const providerSubject = await verifiedApiKeySubject(config, request);
-  if (!providerSubject) return json({ error: "Unauthorized" }, 401);
-
-  if (request.method === "GET" && url.pathname === "/v0/shares/providers") {
-    const response = await shareStore(env).fetch(
-      new Request(
-        `https://share-store/providers?providerSubject=${encodeURIComponent(providerSubject)}`,
-      ),
-    );
-
-    return json(await response.json(), response.status);
-  }
-
-  if (request.method === "GET" && url.pathname === "/v0/shares/consumers/me") {
-    const response = await shareStore(env).fetch(
-      new Request(
-        `https://share-store/consumers?consumerSubject=${encodeURIComponent(providerSubject)}`,
-      ),
-    );
-
-    return json(await response.json(), response.status);
-  }
-
-  const match = url.pathname.match(/^\/v0\/shares\/providers\/([^/]+)$/);
-  if (!match) return json({ error: "Not found" }, 404);
-
-  const consumerUsername = decodeURIComponent(match[1] ?? "").trim();
-  const consumerSubject = await getCliUsernameSubject(config, consumerUsername);
-  if (!consumerSubject) return json({ error: "Consumer not found" }, 404);
-
-  if (request.method === "PUT") {
-    const providerUsername = await getCliSubjectUsername(
-      config,
-      providerSubject,
-    );
-    if (!providerUsername)
-      return json({ error: "Provider username not found" }, 404);
-
-    const input = normalizeShareGrantInput(await readJson(request));
-    if ("error" in input) return json({ error: input.error }, 400);
-
-    const response = await shareStore(env).fetch(
-      new Request("https://share-store/grants", {
-        method: "PUT",
-        body: JSON.stringify({
-          identity: {
-            providerSubject,
-            providerUsername,
-            consumerSubject,
-            consumerUsername,
-          },
-          input,
-        }),
-      }),
-    );
-    const result = await response.json();
-
-    if (response.ok) {
-      const reconcile = await reconcileConsumerMachine(env, consumerSubject);
-      console.log("share_grant_reconcile", {
-        consumerSubject,
-        providerSubject,
-        ...reconcile,
-      });
-    }
-
-    return json(result, response.status);
-  }
-
-  if (request.method === "DELETE") {
-    const response = await shareStore(env).fetch(
-      new Request("https://share-store/grants", {
-        method: "DELETE",
-        body: JSON.stringify({ providerSubject, consumerSubject }),
-      }),
-    );
-    const result = await response.json();
-
-    if (response.ok) {
-      const reconcile = await reconcileConsumerMachine(env, consumerSubject);
-      console.log("share_grant_reconcile", {
-        consumerSubject,
-        providerSubject,
-        ...reconcile,
-      });
-    }
-
-    return json(result, response.status);
-  }
-
-  if (request.method === "PATCH") {
-    const body = await readJson(request);
-    if (body.status !== "active" && body.status !== "disabled") {
-      return json({ error: "status must be active or disabled" }, 400);
-    }
-
-    const response = await shareStore(env).fetch(
-      new Request("https://share-store/grants", {
-        method: "PATCH",
-        body: JSON.stringify({
-          providerSubject,
-          consumerSubject,
-          status: body.status,
-        }),
-      }),
-    );
-    const result = await response.json();
-
-    if (response.ok) {
-      const reconcile = await reconcileConsumerMachine(env, consumerSubject);
-      console.log("share_grant_reconcile", {
-        consumerSubject,
-        providerSubject,
-        ...reconcile,
-      });
-    }
-
-    return json(result, response.status);
-  }
-
-  return json({ error: "Method not allowed" }, 405);
-}
-
-async function usernameStatusRequest(
-  request: Request,
-  env: Env,
-): Promise<Response | undefined> {
-  const url = new URL(request.url);
-
-  if (url.pathname !== "/") return undefined;
-  const username = usernameFromMainroomHost(url.hostname);
-  if (!username) return undefined;
-  if (request.method !== "GET" && request.method !== "HEAD") {
-    return json({ error: "Method not allowed" }, 405);
-  }
-
-  const taken = await isCliUsernameTaken(workerAppConfig(env), username);
+  const taken = await isCliUsernameTaken(workerAppConfig(c.env), username);
   const status = taken ? "taken" : "available";
 
-  if (request.headers.get("Accept")?.includes("application/json")) {
-    return json({ username, status, available: !taken });
+  if (c.req.header("Accept")?.includes("application/json")) {
+    return c.json({ username, status, available: !taken });
   }
 
-  return text(usernameStatusText(username, status));
+  return c.text(usernameStatusText(username, status));
+}
+
+function rootMethodNotAllowed(c: WorkerContext): Response | Promise<Response> {
+  const username = usernameFromMainroomHost(new URL(c.req.url).hostname);
+  if (!username) return mainroomContainerRequest(c.req.raw, c.env);
+
+  return c.json({ error: "Method not allowed" }, 405);
 }
 
 function usernameFromMainroomHost(hostname: string): string | undefined {
@@ -880,6 +917,17 @@ function authorizeMachineRequest(
 async function readJson(request: Request): Promise<Record<string, unknown>> {
   try {
     const body = await request.json();
+    return body && typeof body === "object" && !Array.isArray(body)
+      ? (body as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+async function requestJson(c: WorkerContext): Promise<Record<string, unknown>> {
+  try {
+    const body = await c.req.json<unknown>();
     return body && typeof body === "object" && !Array.isArray(body)
       ? (body as Record<string, unknown>)
       : {};
@@ -1127,32 +1175,62 @@ function r2Endpoint(accountId: string | undefined): string | undefined {
     : undefined;
 }
 
+const workerApp = new Hono<{ Bindings: Env }>();
+
+/*
+ * USE WORKERS FOR PUBLIC CONTROL-PLANE ROUTES, NOT CONTAINERS.
+ *
+ * CONTAINERS CAN STAY WARM ACROSS DEPLOYS, SO NEW ENV VARS OR ROUTES MAY
+ * NOT BE AVAILABLE IMMEDIATELY. KEEP LOGIN, OAUTH, HEALTH, AND OTHER
+ * DEPLOYMENT-SENSITIVE ENTRYPOINTS IN THE WORKER BEFORE THE CONTAINER FALLBACK.
+ */
+workerApp.get("/v0/auth/cli/config", cliAuthConfig);
+workerApp.all("/v0/auth/cli/config", methodNotAllowed);
+
+workerApp.post("/v0/auth/cli/exchange", cliAuthExchange);
+workerApp.all("/v0/auth/cli/exchange", methodNotAllowed);
+
+workerApp.use("/v0/shares/providers", requireShareProvider);
+workerApp.use("/v0/shares/consumers/me", requireShareProvider);
+workerApp.use("/v0/shares/providers/*", requireShareProvider);
+workerApp.get("/v0/shares/providers", listShareProviders);
+workerApp.all("/v0/shares/providers", methodNotAllowed);
+workerApp.get("/v0/shares/consumers/me", listConsumerShares);
+workerApp.all("/v0/shares/consumers/me", methodNotAllowed);
+workerApp.put("/v0/shares/providers/:consumerUsername", upsertProviderShare);
+workerApp.delete("/v0/shares/providers/:consumerUsername", deleteProviderShare);
+workerApp.patch("/v0/shares/providers/:consumerUsername", updateProviderShare);
+workerApp.all(
+  "/v0/shares/providers/:consumerUsername",
+  providerShareMethodNotAllowed,
+);
+workerApp.all("/v0/shares/providers/*", (c) =>
+  c.json({ error: "Not found" }, 404),
+);
+workerApp.all("/v1/*", async (c) => {
+  const response = await userMachineV1Request(c.req.raw, c.env);
+  return response ?? mainroomContainerRequest(c.req.raw, c.env);
+});
+workerApp.get("/", usernameStatus);
+workerApp.all("/", rootMethodNotAllowed);
+workerApp.post(machinePath, createMachine);
+workerApp.all(machinePath, machineMethodNotAllowed);
+workerApp.get(`${machinePath}/:id`, machineInfo);
+workerApp.delete(`${machinePath}/:id`, deleteMachine);
+workerApp.all(`${machinePath}/:id`, machineMethodNotAllowed);
+workerApp.all(`${machinePath}/*`, machineNotFound);
+workerApp.notFound((c) => mainroomContainerRequest(c.req.raw, c.env));
+
+async function mainroomContainerRequest(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const container = await getRandom(env.MAINROOM_CONTAINER, instanceCount);
+  return container.fetch(proxiedRequest(request));
+}
+
 export default {
-  async fetch(request, env) {
-    /*
-     * USE WORKERS FOR PUBLIC CONTROL-PLANE ROUTES, NOT CONTAINERS.
-     *
-     * CONTAINERS CAN STAY WARM ACROSS DEPLOYS, SO NEW ENV VARS OR ROUTES MAY
-     * NOT BE AVAILABLE IMMEDIATELY. KEEP LOGIN, OAUTH, HEALTH, AND OTHER
-     * DEPLOYMENT-SENSITIVE ENTRYPOINTS IN THE WORKER BEFORE THIS FALLTHROUGH.
-     */
-    const cliResponse = await cliAuthRequest(request, env);
-    if (cliResponse) return cliResponse;
-
-    const shareResponse = await shareRequest(request, env);
-    if (shareResponse) return shareResponse;
-
-    // User subdomain inference traffic stays on the Worker edge instead of the app container.
-    const userMachineResponse = await userMachineV1Request(request, env);
-    if (userMachineResponse) return userMachineResponse;
-
-    const usernameStatusResponse = await usernameStatusRequest(request, env);
-    if (usernameStatusResponse) return usernameStatusResponse;
-
-    const machineResponse = await machineRequest(request, env);
-    if (machineResponse) return machineResponse;
-
-    const container = await getRandom(env.MAINROOM_CONTAINER, instanceCount);
-    return container.fetch(proxiedRequest(request));
+  fetch(request, env, ctx) {
+    return workerApp.fetch(request, env, ctx);
   },
 } satisfies ExportedHandler<Env>;
