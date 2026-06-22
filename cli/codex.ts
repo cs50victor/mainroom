@@ -2,7 +2,7 @@ import { checkbox } from "@inquirer/prompts";
 import { readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { z } from "zod";
-import { uploadJson, verifyApiKey } from "./api";
+import { reloadTokenproxyConfig, uploadJson, verifyApiKey } from "./api";
 import { readCredentials } from "./credentials";
 import { isMissingFile } from "./errors";
 import type { CodexSyncOptions } from "./types";
@@ -102,6 +102,25 @@ export async function syncCodex(options: CodexSyncOptions): Promise<number> {
       `${candidate.path} -> s3://${result.data.bucket}/${result.data.key}`,
     );
   }
+
+  const reload = await reloadTokenproxyConfig(
+    credentials.apiUrl,
+    credentials.token,
+  );
+  if (!reload.ok) {
+    console.error(
+      `Uploaded auth JSON, but tokenproxy reload failed: ${reload.error}`,
+    );
+    return 1;
+  }
+
+  console.log(
+    reload.data.created
+      ? "Tokenproxy started with the updated config."
+      : reload.data.restarted
+        ? "Tokenproxy restarted with the updated config."
+        : "Tokenproxy config reload requested.",
+  );
 
   return 0;
 }
