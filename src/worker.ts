@@ -399,6 +399,7 @@ export class UserMachineContainer extends Container<Env> {
     );
     if (!record) return { restarted: false };
 
+    await this.startMachine(record);
     const reload = await this.reloadConfig(record);
     if (reload.reloaded) {
       return { restarted: false };
