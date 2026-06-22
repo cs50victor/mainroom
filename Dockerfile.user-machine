@@ -1,6 +1,6 @@
 FROM debian:bookworm-slim
 
-ARG TOKENPROXY_VERSION=v0.1.14
+ARG TOKENPROXY_VERSION=v0.1.15
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends bash ca-certificates curl tar \

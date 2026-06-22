@@ -77,7 +77,7 @@ const s3ListParser = new XMLParser();
  *   https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/operations/draining
  *   https://nginx.org/en/docs/control.html
  */
-const tokenproxyRuntimeVersion = "v0.1.14";
+const tokenproxyRuntimeVersion = "v0.1.15";
 const tokenproxyEntrypoint = [
   "tokenproxy",
   "--config",
@@ -1494,7 +1494,6 @@ async function renderTokenproxyConfig(
       id: `codex:${uploadName.replace(/\.json$/, "")}`,
       kind: "chatgpt_codex_auth_json",
       auth_json_path: authJsonUrl,
-      base_url: "https://chatgpt.com/backend-api/codex",
       supports_responses: true,
       supports_responses_ws: true,
       supports_compact: true,
