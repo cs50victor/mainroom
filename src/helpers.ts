@@ -411,6 +411,18 @@ export async function getCliUsernameSubject(
   return users.data[0]?.id;
 }
 
+export async function getCliSubjectUsername(
+  config: AppConfig,
+  subject: string,
+): Promise<string | undefined> {
+  if (config.authMode === "mock") return "mock";
+
+  const user = await clerkApi(config, (client) =>
+    client.users.getUser(subject),
+  );
+  return user.username ?? undefined;
+}
+
 async function clerkApi<T>(
   config: AppConfig,
   callback: (client: ClerkClient) => Promise<T>,

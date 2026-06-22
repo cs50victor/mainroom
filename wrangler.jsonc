@@ -59,6 +59,10 @@
         "class_name": "UserMachineContainer",
         "name": "USER_MACHINE_CONTAINER",
       },
+      {
+        "class_name": "ShareGrantStore",
+        "name": "SHARE_GRANT_STORE",
+      },
     ],
   },
   "migrations": [
@@ -69,6 +73,10 @@
     {
       "new_sqlite_classes": ["UserMachineContainer"],
       "tag": "v2",
+    },
+    {
+      "new_sqlite_classes": ["ShareGrantStore"],
+      "tag": "v3",
     },
   ],
 }
