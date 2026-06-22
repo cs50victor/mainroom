@@ -389,7 +389,10 @@ export class UserMachineContainer extends Container<Env> {
   }
 
   async delete(): Promise<void> {
-    await this.destroy();
+    const state = await this.getState();
+    if (isLiveContainerState(state.status)) {
+      await this.destroy();
+    }
     await this.ctx.storage.delete(this.storageKey);
   }
 
@@ -405,7 +408,10 @@ export class UserMachineContainer extends Container<Env> {
     }
 
     // Restart remains the fallback when tokenproxy reports restart_required or reload is unavailable.
-    await this.destroy();
+    const state = await this.getState();
+    if (isLiveContainerState(state.status)) {
+      await this.destroy();
+    }
     await this.startMachine(record);
 
     return { restarted: true };
@@ -913,17 +919,25 @@ async function reloadOwnTokenproxyConfig(c: WorkerContext): Promise<Response> {
   const apiKey = await verifiedApiKey(workerAppConfig(c.env), c.req.raw);
   if (!apiKey) return c.json({ error: "Unauthorized" }, 401);
 
-  const reconcile = await ensureConsumerMachine(
-    c.env,
-    apiKey.subject,
-    apiKey.id,
-  );
-  console.log("tokenproxy_config_reconcile", {
-    subject: apiKey.subject,
-    ...reconcile,
-  });
+  try {
+    const reconcile = await ensureConsumerMachine(
+      c.env,
+      apiKey.subject,
+      apiKey.id,
+    );
+    console.log("tokenproxy_config_reconcile", {
+      subject: apiKey.subject,
+      ...reconcile,
+    });
 
-  return c.json(reconcile);
+    return c.json(reconcile);
+  } catch (error) {
+    console.error("tokenproxy_config_reconcile_failed", {
+      subject: apiKey.subject,
+      error: workerErrorMessage(error),
+    });
+    return c.json({ error: workerErrorMessage(error) }, 500);
+  }
 }
 
 async function signedTokenproxyConfig(c: WorkerContext): Promise<Response> {
@@ -1417,6 +1431,14 @@ function jsonUploadKey(userId: string, uploadName: string): string {
 
 function isJsonUploadName(value: string): boolean {
   return jsonUploadNamePattern.test(value);
+}
+
+function isLiveContainerState(status: string): boolean {
+  return status === "running" || status === "healthy";
+}
+
+function workerErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function json(body: unknown, status = 200): Response {
