@@ -389,10 +389,7 @@ export class UserMachineContainer extends Container<Env> {
   }
 
   async delete(): Promise<void> {
-    const state = await this.getState();
-    if (isLiveContainerState(state.status)) {
-      await this.destroy();
-    }
+    await this.stop("SIGKILL");
     await this.ctx.storage.delete(this.storageKey);
   }
 
@@ -408,10 +405,7 @@ export class UserMachineContainer extends Container<Env> {
     }
 
     // Restart remains the fallback when tokenproxy reports restart_required or reload is unavailable.
-    const state = await this.getState();
-    if (isLiveContainerState(state.status)) {
-      await this.destroy();
-    }
+    await this.stop("SIGKILL");
     await this.startMachine(record);
 
     return { restarted: true };
@@ -1431,10 +1425,6 @@ function jsonUploadKey(userId: string, uploadName: string): string {
 
 function isJsonUploadName(value: string): boolean {
   return jsonUploadNamePattern.test(value);
-}
-
-function isLiveContainerState(status: string): boolean {
-  return status === "running" || status === "healthy";
 }
 
 function workerErrorMessage(error: unknown): string {
