@@ -22,6 +22,10 @@
     "CLERK_OAUTH_CLIENT_ID": "Bvbh1z5AiDEw6Mwm",
     "CLERK_OAUTH_TOKEN_URL": "https://clerk.mainroom.sh/oauth/token",
     "CORS_ORIGIN": "https://mainroom.sh",
+    "FLY_APP_HOSTNAME": "mainroom-user-machines.fly.dev",
+    "FLY_APP_NAME": "mainroom-user-machines",
+    "FLY_MACHINE_REGION": "iad",
+    "FLY_TOKENPROXY_IMAGE": "registry.fly.io/mainroom-user-machines:tokenproxy-v0.1.16",
   },
   "secrets": {
     "required": [
@@ -29,6 +33,7 @@
       "AWS_SECRET_ACCESS_KEY",
       "CLERK_PUBLISHABLE_KEY",
       "CLERK_SECRET_KEY",
+      "FLY_API_TOKEN",
       "MACHINE_CONTROL_TOKEN",
       "S3_BUCKET",
       "S3_ENDPOINT",
@@ -41,12 +46,6 @@
       "image": "./Dockerfile",
       "instance_type": "lite",
       "max_instances": 3,
-    },
-    {
-      "class_name": "UserMachineContainer",
-      "image": "./Dockerfile.user-machine",
-      "instance_type": "lite",
-      "max_instances": 14957,
     },
   ],
   "durable_objects": {

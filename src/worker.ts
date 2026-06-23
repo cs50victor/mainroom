@@ -1,4 +1,4 @@
-import { Container, getContainer, getRandom } from "@cloudflare/containers";
+import { Container, getRandom } from "@cloudflare/containers";
 import { AwsClient } from "aws4fetch";
 import { DurableObject } from "cloudflare:workers";
 import { XMLParser } from "fast-xml-parser";
@@ -16,6 +16,13 @@ import {
   readConfig,
   verifyApiKey,
 } from "./helpers";
+import {
+  flyMachineApi,
+  flyMachineConfig,
+  flyMachineFetch,
+  flyMachineName,
+  type FlyMachine,
+} from "./fly-machines";
 import { apiKeySchema } from "./schemas/api-keys";
 import {
   authorizeShareGrant,
@@ -52,20 +59,22 @@ const s3ListParser = new XMLParser();
  * WebSockets; destroying the running container can visibly abort those
  * connections.
  *
- * Keep the runtime version in the explicit Container Durable Object id so new
- * requests route to the new generation while old requests drain on the old
- * generation until they finish or sleepAfter idles it out. If we add
- * load-balanced slots, keep the generation boundary and append the slot after
- * the version: user:<subject>:<version>:<slot>. Select only active-generation
- * slots for new requests; let older generations drain.
+ * Keep the runtime version in the explicit Durable Object id so new requests
+ * create/route to a new Fly Machine generation. Old generations are left for
+ * their active streams/WebSockets to drain before Fly autostop suspends them.
+ * If we add load-balanced slots, keep the generation boundary and append the
+ * slot after the version: user:<subject>:<version>:<slot>. Select only
+ * active-generation slots for new requests; let older generations drain.
  *
  * References:
- * - Cloudflare Containers are Durable Object wrappers with lifecycle/state:
- *   https://developers.cloudflare.com/containers/container-class/
- * - Cloudflare Containers support explicit IDs and getRandom routing:
- *   https://developers.cloudflare.com/containers/platform-details/scaling-and-routing/
- * - Cloudflare Containers forward WebSockets through fetch:
- *   https://developers.cloudflare.com/containers/examples/websocket/
+ * - Fly Machines API creates, starts, stops, and deletes tokenproxy Machines:
+ *   https://fly.io/docs/machines/api/machines-resource/
+ * - Fly Proxy can autostart/autostop existing Machines and supports suspend:
+ *   https://fly.io/docs/reference/fly-proxy-autostop-autostart/
+ *   https://fly.io/docs/reference/suspend-resume/
+ * - Fly force-instance routing pins /v1 traffic to the user's Machine. A
+ *   2026-06-23 smoke test created two Machines and verified pinned requests.
+ *   https://fly.io/docs/networking/dynamic-request-routing/
  * - Durable Object WebSockets are long-lived TCP connections:
  *   https://developers.cloudflare.com/durable-objects/best-practices/websockets/
  * - Durable Object lifecycle keeps active WebSockets alive:
@@ -108,6 +117,13 @@ type Env = {
   CLERK_PUBLISHABLE_KEY: string;
   CLERK_SECRET_KEY: string;
   CORS_ORIGIN?: string;
+  FLY_API_TOKEN?: string;
+  FLY_APP_HOSTNAME?: string;
+  FLY_APP_NAME?: string;
+  FLY_MACHINE_CPUS?: string;
+  FLY_MACHINE_MEMORY_MB?: string;
+  FLY_MACHINE_REGION?: string;
+  FLY_TOKENPROXY_IMAGE?: string;
   MACHINE_CONTROL_TOKEN: string;
   MAINROOM_CONTAINER: DurableObjectNamespace<MainroomContainer>;
   R2_ACCOUNT_ID?: string;
@@ -126,6 +142,7 @@ type Env = {
 // Future desired config fields belong here, while live tokenproxy status stays observational.
 type UserMachineRecord = {
   apiKeyId: string;
+  flyMachineId?: string;
   id: string;
   subject: string;
 };
@@ -342,32 +359,22 @@ export class ShareGrantStore extends DurableObject<Env> {
   }
 }
 
-export class UserMachineContainer extends Container<Env> {
-  defaultPort = 8787;
-  sleepAfter = "30m";
+export class UserMachineContainer extends DurableObject<Env> {
   storageKey = "user-machine";
-
-  constructor(ctx: ConstructorParameters<typeof Container<Env>>[0], env: Env) {
-    super(ctx, env);
-    this.envVars = {
-      MACHINE_KIND: "user",
-      NODE_ENV: "production",
-    };
-  }
 
   async create(record: UserMachineRecord): Promise<{
     apiKeyId: string;
     id: string;
-    state: Awaited<ReturnType<UserMachineContainer["getState"]>>;
+    state: string;
     subject: string;
   }> {
     await this.ctx.storage.put(this.storageKey, record);
-    await this.startMachine(record);
+    const machine = await this.ensureFlyMachine(record);
 
     return {
       apiKeyId: record.apiKeyId,
       id: record.id,
-      state: await this.getState(),
+      state: machine.state,
       subject: record.subject,
     };
   }
@@ -375,21 +382,32 @@ export class UserMachineContainer extends Container<Env> {
   async info(): Promise<{
     apiKeyId?: string;
     id?: string;
-    state: Awaited<ReturnType<UserMachineContainer["getState"]>>;
+    state: string;
     subject?: string;
   }> {
     const record = await this.ctx.storage.get<UserMachineRecord>(
       this.storageKey,
     );
+    const state = record?.flyMachineId
+      ? await this.flyMachineState(record.flyMachineId)
+      : "missing";
 
     return {
       ...record,
-      state: await this.getState(),
+      state,
     };
   }
 
   async delete(): Promise<void> {
-    await this.stop("SIGKILL");
+    const record = await this.ctx.storage.get<UserMachineRecord>(
+      this.storageKey,
+    );
+    if (record?.flyMachineId) {
+      const fly = requiredFlyMachineConfig(this.env);
+      await flyMachineApi(fly, `/machines/${record.flyMachineId}?force=true`, {
+        method: "DELETE",
+      });
+    }
     await this.ctx.storage.delete(this.storageKey);
   }
 
@@ -399,70 +417,40 @@ export class UserMachineContainer extends Container<Env> {
     );
     if (!record) return { restarted: false };
 
-    await this.startMachine(record);
     const reload = await this.reloadConfig(record);
     if (reload.reloaded) {
       return { restarted: false };
     }
 
-    // Restart remains the fallback when tokenproxy reports restart_required or reload is unavailable.
-    await this.stop("SIGKILL");
-    await this.startMachine(record);
+    const fly = requiredFlyMachineConfig(this.env);
+    const machine = await this.ensureFlyMachine(record);
+    await flyMachineApi(fly, `/machines/${machine.flyMachineId}/stop`, {
+      method: "POST",
+      body: JSON.stringify({ signal: "SIGKILL", timeout: "0s" }),
+    }).catch((error) => {
+      const message = workerErrorMessage(error);
+      if (!message.includes("not found")) throw error;
+    });
+    await flyMachineApi(fly, `/machines/${machine.flyMachineId}/start`, {
+      method: "POST",
+    });
 
     return { restarted: true };
   }
 
-  override async fetch(request: Request): Promise<Response> {
+  async fetch(request: Request): Promise<Response> {
     // Every user-machine fetch is also a wake-up path for sleeping tokenproxy containers.
-    const record = await this.ctx.storage.get<UserMachineRecord>(
-      this.storageKey,
-    );
+    let record = await this.ctx.storage.get<UserMachineRecord>(this.storageKey);
 
     if (!record) return json({ error: "User machine not found" }, 404);
 
-    await this.startMachine(record);
     const { secret } = await getApiKeySecret(
       workerAppConfig(this.env),
       record.apiKeyId,
     );
-
-    return super.fetch(tokenproxyRequest(request, secret));
-  }
-
-  private async startMachine(record: UserMachineRecord): Promise<void> {
-    // Mainroom injects only the user's private tokenproxy bearer on the private container hop.
-    // Runtime object reads should move to signed HTTPS URLs, not long-lived S3 credentials.
-    const { secret } = await getApiKeySecret(
-      workerAppConfig(this.env),
-      record.apiKeyId,
-    );
-
-    await this.startAndWaitForPorts({
-      startOptions: {
-        envVars: {
-          ...this.envVars,
-          ...s3EnvVars(this.env),
-          TOKENPROXY_CLIENT_KEY: secret,
-          TOKENPROXY_ADMIN_KEY: secret,
-          TOKENPROXY_CONFIG_UPDATE_ENDPOINT: `https://${rootHost}/v0/tokenproxy/auth-json/refresh`,
-          USER_MACHINE_ID: record.id,
-          USER_SUBJECT: record.subject,
-        },
-        entrypoint: [
-          ...tokenproxyEntrypoint.slice(0, 2),
-          await signedMainroomUrl(
-            this.env,
-            `/v0/tokenproxy/config/${encodeURIComponent(record.subject)}.toml`,
-            signedConfigTtlSeconds,
-          ),
-          ...tokenproxyEntrypoint.slice(3),
-        ],
-        labels: {
-          machine: record.id,
-          subject: record.subject,
-        },
-      },
-    });
+    const fly = requiredFlyMachineConfig(this.env);
+    record = await this.ensureFlyMachine(record);
+    return flyMachineFetch(fly, record, tokenproxyRequest(request, secret));
   }
 
   private async reloadConfig(
@@ -490,13 +478,146 @@ export class UserMachineContainer extends Container<Env> {
     });
 
     try {
-      const response = await super.fetch(tokenproxyRequest(request, secret));
+      const fly = requiredFlyMachineConfig(this.env);
+      const flyRecord = await this.ensureFlyMachine(record);
+      const response = await flyMachineFetch(
+        fly,
+        flyRecord,
+        tokenproxyRequest(request, secret),
+      );
       if (!response.ok) return { reloaded: false };
 
       const result = (await response.json()) as { reloaded?: unknown };
       return { reloaded: result.reloaded === true };
     } catch {
       return { reloaded: false };
+    }
+  }
+
+  private async ensureFlyMachine(
+    record: UserMachineRecord,
+  ): Promise<UserMachineRecord & { flyMachineId: string; state: string }> {
+    const fly = requiredFlyMachineConfig(this.env);
+    if (record.flyMachineId) {
+      await flyMachineApi(fly, `/machines/${record.flyMachineId}/start`, {
+        method: "POST",
+      }).catch((error) => {
+        const message = workerErrorMessage(error);
+        if (!message.includes("machine still active")) throw error;
+      });
+      const state = await this.flyMachineState(record.flyMachineId);
+      return { ...record, flyMachineId: record.flyMachineId, state };
+    }
+
+    const { secret } = await getApiKeySecret(
+      workerAppConfig(this.env),
+      record.apiKeyId,
+    );
+    const configUrl = await signedMainroomUrl(
+      this.env,
+      `/v0/tokenproxy/config/${encodeURIComponent(record.subject)}.toml`,
+      signedConfigTtlSeconds,
+    );
+    const existing = await flyMachineApi<FlyMachine[]>(
+      fly,
+      `/machines?metadata.mainroom_user_machine_id=${encodeURIComponent(record.id)}`,
+    );
+    const existingMachine = existing.find(
+      (machine): machine is FlyMachine & { id: string } =>
+        typeof machine.id === "string",
+    );
+    if (existingMachine) {
+      const next = {
+        ...record,
+        flyMachineId: existingMachine.id,
+      };
+      await this.ctx.storage.put(this.storageKey, next);
+      return {
+        ...next,
+        state: stringFromFlyMachineState(existingMachine.state),
+      };
+    }
+
+    const machine = await flyMachineApi<FlyMachine>(fly, "/machines", {
+      method: "POST",
+      body: JSON.stringify({
+        name: flyMachineName(record.subject, tokenproxyRuntimeVersion),
+        region: fly.region,
+        config: {
+          image: fly.image,
+          env: {
+            ...s3EnvVars(this.env),
+            MACHINE_KIND: "user",
+            NODE_ENV: "production",
+            TOKENPROXY_ADMIN_KEY: secret,
+            TOKENPROXY_CLIENT_KEY: secret,
+            TOKENPROXY_CONFIG_UPDATE_ENDPOINT: `https://${rootHost}/v0/tokenproxy/auth-json/refresh`,
+            USER_MACHINE_ID: record.id,
+            USER_SUBJECT: record.subject,
+          },
+          init: {
+            exec: [
+              ...tokenproxyEntrypoint.slice(0, 2),
+              configUrl,
+              ...tokenproxyEntrypoint.slice(3),
+            ],
+          },
+          metadata: {
+            mainroom_subject: record.subject,
+            mainroom_user_machine_id: record.id,
+            mainroom_tokenproxy_runtime: tokenproxyRuntimeVersion,
+          },
+          guest: {
+            cpu_kind: "shared",
+            cpus: fly.cpus,
+            memory_mb: fly.memoryMb,
+          },
+          restart: {
+            policy: "always",
+          },
+          services: [
+            {
+              protocol: "tcp",
+              internal_port: 8787,
+              autostart: true,
+              autostop: "suspend",
+              min_machines_running: 0,
+              concurrency: {
+                type: "connections",
+                soft_limit: 20,
+                hard_limit: 100,
+              },
+              ports: [
+                { port: 80, handlers: ["http"] },
+                { port: 443, handlers: ["tls", "http"] },
+              ],
+            },
+          ],
+        },
+      }),
+    });
+    if (typeof machine.id !== "string") {
+      throw new Error("Fly did not return a machine id");
+    }
+
+    const next = {
+      ...record,
+      flyMachineId: machine.id,
+    };
+    await this.ctx.storage.put(this.storageKey, next);
+    return { ...next, state: stringFromFlyMachineState(machine.state) };
+  }
+
+  private async flyMachineState(machineId: string): Promise<string> {
+    const fly = requiredFlyMachineConfig(this.env);
+    try {
+      const machine = await flyMachineApi<FlyMachine>(
+        fly,
+        `/machines/${machineId}`,
+      );
+      return stringFromFlyMachineState(machine.state);
+    } catch {
+      return "unknown";
     }
   }
 }
@@ -555,9 +676,9 @@ async function userMachineV1Request(
 
   // Non-owner peer calls are authorized here before Mainroom injects the provider bearer.
   // Deterministic user:<subject> routing keeps one logical tokenproxy machine per user.
-  const machine = getContainer(env.USER_MACHINE_CONTAINER, machineId(subject));
+  const machine = userMachineStub(env, machineId(subject));
 
-  // Container.fetch, not containerFetch, preserves WebSocket upgrades for /v1/responses.
+  // Durable Object fetch keeps Mainroom's auth gate in front of the Fly data plane.
   try {
     return releaseGrantWhenDone(
       env,
@@ -637,7 +758,7 @@ async function createMachine(c: WorkerContext): Promise<Response> {
   }
 
   const id = machineId(subject);
-  const machine = getContainer(c.env.USER_MACHINE_CONTAINER, id);
+  const machine = userMachineStub(c.env, id);
 
   return c.json(
     await machine.create({
@@ -680,7 +801,7 @@ function getMachine(c: WorkerContext):
 
   return {
     id,
-    stub: getContainer(c.env.USER_MACHINE_CONTAINER, id),
+    stub: userMachineStub(c.env, id),
   };
 }
 
@@ -1085,10 +1206,7 @@ async function reconcileConsumerMachine(
   env: Env,
   consumerSubject: string,
 ): Promise<{ restarted: boolean }> {
-  const machine = getContainer(
-    env.USER_MACHINE_CONTAINER,
-    machineId(consumerSubject),
-  );
+  const machine = userMachineStub(env, machineId(consumerSubject));
 
   return machine.restartForShareChange();
 }
@@ -1099,7 +1217,7 @@ async function ensureConsumerMachine(
   apiKeyId: string,
 ): Promise<{ created: boolean; restarted: boolean }> {
   const id = machineId(subject);
-  const machine = getContainer(env.USER_MACHINE_CONTAINER, id);
+  const machine = userMachineStub(env, id);
   const info = await machine.info();
   if (info.subject) {
     return { created: false, ...(await machine.restartForShareChange()) };
@@ -1177,6 +1295,29 @@ function auditGrant(grant: ShareGrantRecord) {
 function machineId(subject: string): string {
   // User machines are keyed by subject plus runtime generation, not username.
   return `user:${subject}:${tokenproxyRuntimeVersion}`;
+}
+
+function userMachineStub(
+  env: Env,
+  id: string,
+): DurableObjectStub<UserMachineContainer> {
+  return env.USER_MACHINE_CONTAINER.get(
+    env.USER_MACHINE_CONTAINER.idFromName(id),
+  );
+}
+
+function requiredFlyMachineConfig(env: Env) {
+  const config = flyMachineConfig(env);
+  if (!config) {
+    throw new Error(
+      "Fly user machines are not configured; set FLY_API_TOKEN, FLY_APP_NAME, and FLY_TOKENPROXY_IMAGE",
+    );
+  }
+  return config;
+}
+
+function stringFromFlyMachineState(state: unknown): string {
+  return typeof state === "string" && state ? state : "unknown";
 }
 
 function workerAppConfig(env: Env) {
