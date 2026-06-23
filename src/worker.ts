@@ -411,15 +411,23 @@ export class UserMachineContainer extends DurableObject<Env> {
     await this.ctx.storage.delete(this.storageKey);
   }
 
-  async restartForShareChange(): Promise<{ restarted: boolean }> {
+  async restartForShareChange(): Promise<{
+    created: boolean;
+    restarted: boolean;
+  }> {
     const record = await this.ctx.storage.get<UserMachineRecord>(
       this.storageKey,
     );
-    if (!record) return { restarted: false };
+    if (!record) return { created: false, restarted: false };
 
+    const hadFlyMachine = Boolean(record.flyMachineId);
     const reload = await this.reloadConfig(record);
+    const current = await this.ctx.storage.get<UserMachineRecord>(
+      this.storageKey,
+    );
+    const created = !hadFlyMachine && Boolean(current?.flyMachineId);
     if (reload.reloaded) {
-      return { restarted: false };
+      return { created, restarted: false };
     }
 
     const fly = requiredFlyMachineConfig(this.env);
@@ -435,7 +443,7 @@ export class UserMachineContainer extends DurableObject<Env> {
       method: "POST",
     });
 
-    return { restarted: true };
+    return { created, restarted: true };
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -1220,7 +1228,7 @@ async function ensureConsumerMachine(
   const machine = userMachineStub(env, id);
   const info = await machine.info();
   if (info.subject) {
-    return { created: false, ...(await machine.restartForShareChange()) };
+    return machine.restartForShareChange();
   }
 
   await machine.create({ apiKeyId, id, subject });
