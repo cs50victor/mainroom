@@ -5,11 +5,16 @@ import {
   codexAccountsSchema,
   codexAccountUpdatedSchema,
 } from "../src/schemas/codex-accounts";
+import {
+  incomingSharesSchema,
+  outgoingSharesSchema,
+  shareUpdatedSchema,
+} from "../src/schemas/shares";
 
 type RequestOptions = {
   body?: BodyInit;
   contentType?: string;
-  method?: "GET" | "POST" | "PATCH";
+  method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
   token?: string;
   uploadName?: string;
 };
@@ -45,6 +50,38 @@ const jsonUploadResponseSchema = z.object({
 });
 
 type RequestResult<T> = { ok: true; data: T } | { ok: false; error: string };
+
+export function fetchOutgoingShares(apiUrl: string, token: string) {
+  return requestJson(apiUrl, "/v0/shares/providers", outgoingSharesSchema, {
+    token,
+  });
+}
+
+export function fetchIncomingShares(apiUrl: string, token: string) {
+  return requestJson(apiUrl, "/v0/shares/consumers/me", incomingSharesSchema, {
+    token,
+  });
+}
+
+export function updateShare(
+  apiUrl: string,
+  token: string,
+  username: string,
+  method: "PUT" | "PATCH" | "DELETE",
+  body?: object,
+) {
+  return requestJson(
+    apiUrl,
+    `/v0/shares/providers/${encodeURIComponent(username)}`,
+    shareUpdatedSchema,
+    {
+      method,
+      token,
+      contentType: "application/json",
+      body: body ? JSON.stringify(body) : undefined,
+    },
+  );
+}
 
 export function fetchCodexAccounts(apiUrl: string, token: string) {
   return requestJson(apiUrl, "/v0/tokenproxy/accounts", codexAccountsSchema, {

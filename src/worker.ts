@@ -224,8 +224,8 @@ export class ShareGrantStore extends DurableObject<Env> {
       const consumerSubject = stringField(body.consumerSubject);
       const key = providerConsumerKey(providerSubject, consumerSubject);
       const grant = await this.ctx.storage.get<ShareGrantRecord>(key);
-      if (!grant || grant.status !== "active") {
-        return json({ error: "Active grant not found" }, 404);
+      if (!grant || grant.status === "revoked") {
+        return json({ error: "Grant not found" }, 404);
       }
 
       const revoked = {
@@ -269,20 +269,35 @@ export class ShareGrantStore extends DurableObject<Env> {
         (grant) => grant.providerSubject === providerSubject,
       );
 
-      return json({ grants });
+      return json({
+        grants: await Promise.all(
+          grants.map(async (grant) => ({
+            ...grant,
+            usage: await this.publicUsage(grant),
+          })),
+        ),
+      });
     }
 
     if (request.method === "GET" && url.pathname === "/consumers") {
       const consumerSubject = url.searchParams.get("consumerSubject") ?? "";
       const grants = await this.listGrants(
-        (grant) =>
-          grant.consumerSubject === consumerSubject &&
-          grant.status === "active",
+        (grant) => grant.consumerSubject === consumerSubject,
       );
-
+      const shares = await Promise.all(
+        grants.map(async (grant) => ({
+          ...renderConsumerShare(grant),
+          status: grant.status,
+          limits: grant.limits,
+          usage: await this.publicUsage(grant),
+        })),
+      );
       return json({
-        providers: grants.map(renderConsumerShare),
-        tokenproxy_accounts: grants.map(renderPeerAccount),
+        shares,
+        providers: shares.filter((share) => share.status === "active"),
+        tokenproxy_accounts: grants
+          .filter((grant) => grant.status === "active")
+          .map(renderPeerAccount),
       });
     }
 
@@ -364,6 +379,16 @@ export class ShareGrantStore extends DurableObject<Env> {
       tokens: (await this.ctx.storage.get<number>(`${requestKey}:tokens`)) ?? 0,
       inFlight:
         (await this.ctx.storage.get<number>(inFlightKey(grant.grantId))) ?? 0,
+    };
+  }
+
+  private async publicUsage(grant: ShareGrantRecord) {
+    const usage = await this.grantUsage(grant);
+    return {
+      day: new Date().toISOString().slice(0, 10),
+      requests: usage.requests,
+      reservedOutputTokens: usage.tokens,
+      inFlight: usage.inFlight,
     };
   }
 }
@@ -928,6 +953,9 @@ async function listConsumerShares(c: WorkerContext): Promise<Response> {
 async function upsertProviderShare(c: WorkerContext): Promise<Response> {
   const context = await providerConsumerShare(c);
   if (context instanceof Response) return context;
+  if (context.consumerSubject === context.providerSubject) {
+    return c.json({ error: "Choose a friend's username, not your own" }, 400);
+  }
 
   const providerUsername = await getCliSubjectUsername(
     context.config,
@@ -937,7 +965,8 @@ async function upsertProviderShare(c: WorkerContext): Promise<Response> {
     return c.json({ error: "Provider username not found" }, 404);
   }
 
-  const input = normalizeShareGrantInput(await requestJson(c));
+  const body = await requestJson(c);
+  const input = normalizeShareGrantInput(body);
   if ("error" in input) return c.json({ error: input.error }, 400);
 
   const response = await shareStore(c.env).fetch(
@@ -950,7 +979,7 @@ async function upsertProviderShare(c: WorkerContext): Promise<Response> {
           providerSubject: context.providerSubject,
           providerUsername,
         },
-        input,
+        input: body,
       }),
     }),
   );
@@ -1041,12 +1070,15 @@ async function shareGrantResponse(
     const reconcile = await reconcileConsumerMachine(
       c.env,
       context.consumerSubject,
-    );
+    ).catch(() => ({
+      error: "Share saved, but the friend's node could not be updated",
+    }));
     console.log("share_grant_reconcile", {
       consumerSubject: context.consumerSubject,
       providerSubject: context.providerSubject,
       ...reconcile,
     });
+    return json({ ...(result as object), reconcile }, response.status);
   }
 
   return json(result, response.status);
