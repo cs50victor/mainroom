@@ -5,7 +5,7 @@ import type { CliExchangeParams, CliOAuthConfig } from "./types";
 type RequestOptions = {
   body?: BodyInit;
   contentType?: string;
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "PATCH";
   token?: string;
   uploadName?: string;
 };
@@ -41,6 +41,52 @@ const jsonUploadResponseSchema = z.object({
 });
 
 type RequestResult<T> = { ok: true; data: T } | { ok: false; error: string };
+
+const codexAccountsSchema = z.object({
+  username: z.string().optional(),
+  accounts: z.array(
+    z.object({
+      uploadName: z.string(),
+      accountId: z.string().optional(),
+      email: z.string().optional(),
+      expiresAt: z.string().optional(),
+      models: z.array(z.string()).optional(),
+      status: z.enum([
+        "ready",
+        "reauth_required",
+        "disabled",
+        "invalid",
+        "unavailable",
+      ]),
+      detail: z.string().optional(),
+    }),
+  ),
+});
+
+export function fetchCodexAccounts(apiUrl: string, token: string) {
+  return requestJson(apiUrl, "/v0/tokenproxy/accounts", codexAccountsSchema, {
+    token,
+  });
+}
+
+export function setCodexAccountEnabled(
+  apiUrl: string,
+  token: string,
+  uploadName: string,
+  enabled: boolean,
+) {
+  return requestJson(
+    apiUrl,
+    `/v0/tokenproxy/accounts/${encodeURIComponent(uploadName)}`,
+    z.object({ uploadName: z.string(), enabled: z.boolean() }),
+    {
+      token,
+      method: "PATCH",
+      contentType: "application/json",
+      body: JSON.stringify({ enabled }),
+    },
+  );
+}
 
 export function normalizeApiUrl(apiUrl: string): string {
   const url = new URL(apiUrl);
@@ -135,6 +181,7 @@ async function requestJson<T>(
       body: options.body,
       method: options.method ?? "GET",
       headers,
+      signal: AbortSignal.timeout(60000),
     });
     const body = await response.json().catch(() => undefined);
 

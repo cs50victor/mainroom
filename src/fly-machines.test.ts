@@ -7,10 +7,34 @@ import {
   flyMachineName,
   positiveIntegerEnv,
   startFlyMachine,
+  stopFlyMachine,
   type FlyMachineConfig,
 } from "./fly-machines";
 
 const originalFetch = globalThis.fetch;
+
+test("disable stops running and suspended machines and waits for the exact instance", async () => {
+  for (const state of ["started", "suspended", "stopping", "stopped"]) {
+    const calls: string[] = [];
+    globalThis.fetch = (async (url, init) => {
+      calls.push(`${init?.method ?? "GET"} ${String(url)}`);
+      if (calls.length === 1)
+        return Response.json({ state, instance_id: "instance-1" });
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+    await stopFlyMachine(flyConfig(), "machine-id");
+    if (state === "stopped") {
+      expect(calls).toHaveLength(1);
+    } else {
+      expect(calls.at(-1)).toEndWith(
+        "/wait?state=stopped&instance_id=instance-1&timeout=30",
+      );
+      expect(calls.some((call) => call.startsWith("POST "))).toBe(
+        state !== "stopping",
+      );
+    }
+  }
+});
 
 afterEach(() => {
   globalThis.fetch = originalFetch;

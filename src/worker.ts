@@ -22,10 +22,12 @@ import {
   flyMachineFetch,
   flyMachineName,
   startFlyMachine,
+  stopFlyMachine,
   tokenproxyStartup,
   type FlyMachine,
 } from "./fly-machines";
 import { apiKeySchema } from "./schemas/api-keys";
+import { checkCodexAccount, type CodexAccountStatus } from "./codex-accounts";
 import {
   authorizeShareGrant,
   inFlightKey,
@@ -405,6 +407,25 @@ export class UserMachineContainer extends DurableObject<Env> {
       });
     }
     await this.ctx.storage.delete(this.storageKey);
+  }
+
+  async stop(subject: string): Promise<void> {
+    const record = await this.ctx.storage.get<UserMachineRecord>(
+      this.storageKey,
+    );
+    const fly = requiredFlyMachineConfig(this.env);
+    if (record?.flyMachineId) {
+      if (record.subject !== subject) throw new Error("Machine owner mismatch");
+      await stopFlyMachine(fly, record.flyMachineId);
+      return;
+    }
+    const existing = await flyMachineApi<FlyMachine[]>(
+      fly,
+      `/machines?metadata.mainroom_user_machine_id=${encodeURIComponent(machineId(subject))}`,
+    );
+    for (const machine of existing) {
+      if (typeof machine.id === "string") await stopFlyMachine(fly, machine.id);
+    }
   }
 
   async restartForShareChange(): Promise<{
@@ -1062,6 +1083,101 @@ async function ownTokenproxyConfig(c: WorkerContext): Promise<Response> {
   });
 }
 
+async function codexAccounts(c: WorkerContext): Promise<Response> {
+  const config = workerAppConfig(c.env);
+  const apiKey = await verifiedApiKey(config, c.req.raw);
+  if (!apiKey) return c.json({ error: "Unauthorized" }, 401);
+  const uploads = await s3ListJsonUploads(c.env, apiKey.subject);
+  if ("error" in uploads)
+    return c.json({ error: uploads.error }, uploads.status);
+  const disabled = await s3ListNames(
+    c.env,
+    disabledAccountPrefix(apiKey.subject),
+  );
+  if ("error" in disabled)
+    return c.json({ error: disabled.error }, disabled.status);
+  const accounts: CodexAccountStatus[] = [];
+  for (let offset = 0; offset < uploads.names.length; offset += 4) {
+    const batch = await Promise.all(
+      uploads.names
+        .slice(offset, offset + 4)
+        .map(async (uploadName): Promise<CodexAccountStatus> => {
+          const stored = await s3ReadObject(
+            c.env,
+            jsonUploadKey(apiKey.subject, uploadName),
+          );
+          if ("error" in stored) {
+            return {
+              uploadName,
+              status: "unavailable",
+              detail: "Could not read stored credential.",
+            };
+          } else {
+            return checkCodexAccount(
+              uploadName,
+              stored.text,
+              disabled.names.includes(uploadName),
+            );
+          }
+        }),
+    );
+    accounts.push(...batch);
+  }
+  const username = await getCliSubjectUsername(config, apiKey.subject);
+  return c.json({ accounts, username }, 200, { "cache-control": "no-store" });
+}
+
+async function setCodexAccountEnabled(c: WorkerContext): Promise<Response> {
+  const apiKey = await verifiedApiKey(workerAppConfig(c.env), c.req.raw);
+  if (!apiKey) return c.json({ error: "Unauthorized" }, 401);
+  const uploadName = c.req.param("uploadName") ?? "";
+  if (!isJsonUploadName(uploadName))
+    return c.json({ error: "Invalid account filename" }, 400);
+  const body = await requestJson(c);
+  if (typeof body.enabled !== "boolean")
+    return c.json({ error: "enabled must be a boolean" }, 400);
+  const stored = await s3ReadObject(
+    c.env,
+    jsonUploadKey(apiKey.subject, uploadName),
+  );
+  if ("error" in stored) return c.json({ error: stored.error }, stored.status);
+  if (body.enabled) {
+    const account = await checkCodexAccount(uploadName, stored.text);
+    if (account.status !== "ready")
+      return c.json({ error: account.detail ?? "Account is not ready" }, 409);
+  }
+  const result = await s3Fetch(
+    c.env,
+    `${disabledAccountPrefix(apiKey.subject)}${uploadName}`,
+    {
+      method: body.enabled ? "DELETE" : "PUT",
+      body: body.enabled ? undefined : "{}",
+    },
+  );
+  if ("error" in result || !result.response.ok)
+    return c.json({ error: "Could not update account status" }, 502);
+  if (!body.enabled) {
+    try {
+      await userMachineStub(c.env, machineId(apiKey.subject)).stop(
+        apiKey.subject,
+      );
+    } catch {
+      return c.json(
+        {
+          error:
+            "Account disabled for future starts, but the running machine could not be stopped. Retry disable before treating the change as active.",
+        },
+        502,
+      );
+    }
+  }
+  return c.json({ uploadName, enabled: body.enabled });
+}
+
+function disabledAccountPrefix(subject: string): string {
+  return `settings/tokenproxy/disabled/${encodeURIComponent(subject)}/`;
+}
+
 async function signedTokenproxyConfig(c: WorkerContext): Promise<Response> {
   const subject = decodeURIComponent(c.req.param("subject") ?? "").replace(
     /\.toml$/,
@@ -1439,7 +1555,13 @@ async function s3ListJsonUploads(
   env: Env,
   subject: string,
 ): Promise<{ names: string[] } | { error: string; status: 502 }> {
-  const prefix = `uploads/json/${encodeURIComponent(subject)}/`;
+  return s3ListNames(env, `uploads/json/${encodeURIComponent(subject)}/`);
+}
+
+async function s3ListNames(
+  env: Env,
+  prefix: string,
+): Promise<{ names: string[] } | { error: string; status: 502 }> {
   const result = await s3Fetch(env, "", {
     query: { "list-type": "2", prefix },
   });
@@ -1491,7 +1613,11 @@ async function s3ReadObject(
 async function s3Fetch(
   env: Env,
   key: string,
-  options: { query?: Record<string, string> } = {},
+  options: {
+    query?: Record<string, string>;
+    method?: "GET" | "PUT" | "DELETE";
+    body?: string;
+  } = {},
 ): Promise<{ response: Response } | { error: string; status: 502 }> {
   const bucket = env.S3_BUCKET ?? env.AWS_BUCKET;
   const endpoint =
@@ -1529,7 +1655,12 @@ async function s3Fetch(
   });
 
   try {
-    return { response: await aws.fetch(url.toString(), { method: "GET" }) };
+    return {
+      response: await aws.fetch(url.toString(), {
+        method: options.method ?? "GET",
+        body: options.body,
+      }),
+    };
   } catch {
     return { error: "S3 object read failed", status: 502 };
   }
@@ -1602,6 +1733,8 @@ async function renderTokenproxyConfig(
 ): Promise<{ toml: string } | { error: string; status: 502 }> {
   const uploads = await s3ListJsonUploads(env, subject);
   if ("error" in uploads) return uploads;
+  const disabled = await s3ListNames(env, disabledAccountPrefix(subject));
+  if ("error" in disabled) return disabled;
 
   const shareResponse = await shareStore(env).fetch(
     new Request(
@@ -1633,6 +1766,7 @@ async function renderTokenproxyConfig(
   };
 
   for (const uploadName of uploads.names) {
+    if (disabled.names.includes(uploadName)) continue;
     const authJsonUrl = await signedMainroomUrl(
       env,
       `/v0/tokenproxy/auth-json/${encodeURIComponent(subject)}/${uploadName}`,
@@ -1813,6 +1947,10 @@ workerApp.all("/v0/shares/providers/*", (c) =>
 );
 workerApp.post("/v0/tokenproxy/config/reload", reloadOwnTokenproxyConfig);
 workerApp.all("/v0/tokenproxy/config/reload", methodNotAllowed);
+workerApp.get("/v0/tokenproxy/accounts", codexAccounts);
+workerApp.all("/v0/tokenproxy/accounts", methodNotAllowed);
+workerApp.patch("/v0/tokenproxy/accounts/:uploadName", setCodexAccountEnabled);
+workerApp.all("/v0/tokenproxy/accounts/:uploadName", methodNotAllowed);
 workerApp.get("/v0/tokenproxy/config/me", ownTokenproxyConfig);
 workerApp.all("/v0/tokenproxy/config/me", methodNotAllowed);
 workerApp.get("/v0/tokenproxy/config/:subject", signedTokenproxyConfig);

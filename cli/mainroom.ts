@@ -2,12 +2,13 @@
 
 import { Command } from "commander";
 import { authStatus, login, logout, ping } from "./auth";
-import { syncCodex } from "./codex";
+import { codexStatus, disableCodex, reauthCodex, syncCodex } from "./codex";
 import { errorMessage } from "./errors";
 import {
   defaultApiUrl,
   type AuthCommandOptions,
   type CodexSyncOptions,
+  type CodexReauthOptions,
 } from "./types";
 import { mainroomVersion } from "../src/version";
 
@@ -27,6 +28,8 @@ Examples:
   $ mainroom auth signup
   $ mainroom auth login
   $ mainroom codex sync
+  $ mainroom codex status
+  $ mainroom codex reauth
   $ mainroom auth status
   $ mainroom ping`,
   );
@@ -79,7 +82,34 @@ authCommand
 
 program.addCommand(authCommand);
 
-codexCommand.description("Upload Codex auth files.").showHelpAfterError();
+codexCommand
+  .description("Connect and recover remote Codex accounts.")
+  .showHelpAfterError();
+
+codexCommand
+  .command("status")
+  .description("Check stored Codex accounts, even when tokenproxy is down.")
+  .action(() => runCommand(codexStatus));
+codexCommand
+  .command("reauth")
+  .description(
+    "Sign in to Codex, update the remote credential, and verify inference.",
+  )
+  .option(
+    "--account <filename>",
+    "Stored account filename shown by codex status",
+  )
+  .option("--device-auth", "Use Codex device-code sign-in")
+  .action((options: CodexReauthOptions) =>
+    runCommand(() => reauthCodex(options)),
+  );
+codexCommand
+  .command("disable <filename>")
+  .description("Exclude a stored account without deleting its credential.")
+  .option("--yes", "Disable the selected account without prompting")
+  .action((filename: string, options: CodexSyncOptions) =>
+    runCommand(() => disableCodex(filename, options)),
+  );
 
 codexCommand
   .command("sync")
