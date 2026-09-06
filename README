@@ -81,6 +81,9 @@ Users do not need the tokenproxy CLI locally. The remote machine runs it.
 
 ## Development and deployment
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, code reuse, test standards,
+and the pull request workflow.
+
 The homepage serves an agent setup prompt directly; /docs remains the interactive
 API reference. Public guides live at /guides, and /SKILL.md contains the setup
 instructions. Each guide supports a .md URL and Accept: text/markdown.

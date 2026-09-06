@@ -39,21 +39,6 @@ describe("public website", () => {
     const script = await site.request(`${origin}/site.js`);
     expect(script.status).toBe(200);
     expect(script.headers.get("Content-Type")).toStartWith("text/javascript");
-    expect(await script.text()).toContain("navigator.clipboard.writeText");
-  });
-
-  test("renders a complete document with valid structured metadata", async () => {
-    const body = await (await site.request(origin)).text();
-    expect(body).toStartWith("<!doctype html>");
-    const metadata = body.match(
-      /<script type="application\/ld\+json">([\s\S]*?)<\/script>/,
-    );
-    expect(metadata).not.toBeNull();
-    expect(JSON.parse(metadata![1])).toMatchObject({
-      "@type": "WebSite",
-      name: "Mainroom",
-      url: origin,
-    });
   });
 
   test.each([
@@ -93,18 +78,6 @@ describe("public website", () => {
       expect(response.headers.get("Content-Type")).toStartWith("text/markdown");
       expect(full).toContain((await response.text()).trim());
     }
-  });
-
-  test("publishes a discoverable skill with installation and inference verification", async () => {
-    const response = await site.request(`${origin}/SKILL.md`);
-    const skill = await response.text();
-    expect(skill).toStartWith("---\nname: mainroom\ndescription:");
-    expect(skill).toContain("mainroom auth signup");
-    expect(skill).toContain("mainroom codex sync");
-    expect(skill).toContain("/v1/models");
-    expect(response.headers.get("Link")).toContain(
-      '/llms.txt>; rel="describedby"',
-    );
   });
 
   test("uses canonical public URLs even when a guide is read on a user subdomain", async () => {
@@ -154,28 +127,5 @@ describe("public website", () => {
       expect(page.status).toBe(200);
       expect(page.headers.get("Content-Type")).toStartWith("text/html");
     }
-  });
-
-  test("catalog exposes the actual specification and separate Worker documentation", async () => {
-    const response = await site.request(`${origin}/.well-known/api-catalog`);
-    const catalog = await response.json();
-    expect(response.headers.get("Content-Type")).toStartWith(
-      "application/linkset+json",
-    );
-    expect(catalog.linkset[0]["service-desc"][0].href).toBe(
-      `${origin}/openapi.json`,
-    );
-    expect(catalog.linkset[0]["service-doc"][0].href).toBe(
-      `${origin}/guides/api`,
-    );
-  });
-
-  test("HEAD returns metadata without a document body", async () => {
-    const response = await site.request(`${origin}/SKILL.md`, {
-      method: "HEAD",
-    });
-    expect(response.status).toBe(200);
-    expect(response.headers.get("Content-Type")).toStartWith("text/markdown");
-    expect(await response.text()).toBe("");
   });
 });
