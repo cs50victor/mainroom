@@ -1,4 +1,3 @@
-import { Scalar } from "@scalar/hono-api-reference";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
@@ -9,6 +8,7 @@ import { z } from "zod";
 import { readConfig } from "./helpers";
 import { createV0Route } from "./routes/v0";
 import { mainroomVersion } from "./version";
+import { createPublicSite } from "./public-site";
 
 const config = readConfig(Bun.env);
 
@@ -29,7 +29,7 @@ app.use(
   }),
 );
 
-app.get("/", (c) => c.redirect("/docs"));
+app.route("/", createPublicSite());
 
 app.get(
   "/health",
@@ -54,7 +54,10 @@ const openApiDocument = createOpenApiDocument(
     info: {
       title: "Mainroom API",
       version: mainroomVersion,
+      description:
+        "Container API reference. Additional Worker authentication, sharing, and configuration routes are documented at https://mainroom.sh/guides/api. Inference uses https://<username>.mainroom.sh/v1.",
     },
+    servers: [{ url: "https://mainroom.sh" }],
     components: {
       securitySchemes: {
         clerkApiKey: {
@@ -68,8 +71,10 @@ const openApiDocument = createOpenApiDocument(
   { addRoute: false },
 );
 
-app.get("/openapi.json", (c) => c.json(openApiDocument));
-app.get("/docs", Scalar({ url: "/openapi.json" }));
+app.get("/openapi.json", (c) => {
+  c.header("Link", '<https://mainroom.sh/llms.txt>; rel="describedby"');
+  return c.json(openApiDocument);
+});
 
 export default {
   port: config.port,

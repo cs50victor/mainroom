@@ -3,10 +3,16 @@
 https://mainroom.sh
 https://github.com/cs50victor/mainroom
 
-Mainroom gives users personal token inference endpoints, such as
-https://victor.mainroom.sh/v1/responses. The CLI handles sign-in and uploads
-Codex authentication files; the backend manages tokenproxy configuration,
-user machines, and sharing between users.
+Mainroom lets friends and research groups pool subscription inference capacity
+and share costs, even when members contribute or consume different amounts.
+Each person keeps one endpoint, such as https://victor.mainroom.sh/v1/responses,
+backed by their own accounts and nodes shared with them. Providers control access
+and usage limits; the group agrees how to split subscription costs.
+
+The CLI handles sign-in and uploads selected Codex authentication files. The
+backend combines those accounts and incoming peer grants in each node's
+tokenproxy configuration. Mutual sharing uses a separate grant in each direction;
+friends use their own Mainroom keys without exchanging subscription credentials.
 
 ## Architecture
 
@@ -75,16 +81,36 @@ Users do not need the tokenproxy CLI locally. The remote machine runs it.
 
 ## Development and deployment
 
+The homepage serves an agent setup prompt directly; /docs remains the interactive
+API reference. Public guides live at /guides, and /SKILL.md contains the setup
+instructions. Each guide supports a .md URL and Accept: text/markdown.
+/llms.txt, /llms-full.txt, /sitemap.xml, /robots.txt, and /.well-known/api-catalog
+provide discovery and exports. These public routes run in both the Worker and Bun
+server; Worker requests do not need to wake the container to read them.
+
+Page components live in src/site as server-rendered Hono TSX. Tailwind CSS and
+its typography plugin provide the styling; src/site/tailwind.css contains only
+Tailwind directives and theme tokens. Compiled CSS in src/generated is ignored
+by Git and rebuilt for local startup, Docker, CI, and Wrangler deployment.
+
+Edit the Markdown sources in src/content to update both HTML guides and exports.
+The generated OpenAPI covers container API routes; src/content/api.md documents
+the additional Worker routes. Keep guide examples aligned with the CLI and route
+implementations. Private API paths and user subdomains are excluded from crawling;
+authentication, not robots.txt, protects private content.
+
 Use Bun; CI pins Bun 1.3.14. Copy .env.example to .env and configure the
 services needed for local work. Keep credentials out of version control.
 
 bun install --frozen-lockfile
 bun run dev
+bun run build:css
 bun run typecheck
 bun run lint
 bun test
 
-bun run dev starts the Bun API, not the complete Worker/Fly deployment.
+bun run dev watches both Tailwind sources and the Bun API. It does not start
+the complete Worker/Fly deployment.
 Production Fly settings and required Worker secrets are in wrangler.jsonc;
 .env.example does not list every production requirement.
 
