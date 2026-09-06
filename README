@@ -1,155 +1,39 @@
 # Mainroom
 
-https://mainroom.sh
-https://github.com/cs50victor/mainroom
+Share subscription inference capacity with friends and research groups.
+Each person gets one endpoint at https://<username>.mainroom.sh/v1, backed
+by their own accounts and nodes shared with them. Providers control access
+and usage limits.
 
-Mainroom lets friends and research groups pool subscription inference capacity
-and share costs, even when members contribute or consume different amounts.
-Each person keeps one endpoint, such as https://victor.mainroom.sh/v1/responses,
-backed by their own accounts and nodes shared with them. Providers control access
-and usage limits; the group agrees how to split subscription costs.
+[Website](https://mainroom.sh) · [Guides](https://mainroom.sh/guides) · [API reference](https://mainroom.sh/docs)
 
-The CLI handles sign-in and uploads selected Codex authentication files. The
-backend combines those accounts and incoming peer grants in each node's
-tokenproxy configuration. Mutual sharing uses a separate grant in each direction;
-friends use their own Mainroom keys without exchanging subscription credentials.
+## Get started
+
+[Download the CLI](https://github.com/cs50victor/mainroom/releases/latest),
+extract it, and put mainroom on your PATH.
+
+    mainroom auth signup
+    mainroom codex sync
+
+Sync uploads the local Codex credentials you select. To use a friend's capacity
+or connect an inference client, follow the [setup guide](https://mainroom.sh/guides/getting-started).
+
+## Account recovery
+
+    mainroom codex status
+    mainroom codex reauth --account <filename.json>
+    mainroom codex disable <filename.json>
+
+Reauth requires the official Codex CLI and preserves your usual local login.
+Disable keeps the credential but stops the remote machine, interrupting active
+requests. The remote machine runs tokenproxy; no local tokenproxy install is needed.
 
 ## Architecture
 
-- Cloudflare Worker: src/worker.ts handles public control-plane routes,
-  authentication, sharing, machine management, and request forwarding.
-- Cloudflare Durable Objects: store user machine records and sharing grants.
-  UserMachineContainer manages Fly Machines despite its historical name.
-- Cloudflare Container: Dockerfile runs the Bun/Hono API in src/index.ts.
-  The Worker forwards fallback requests, including /health, to this service.
-- Fly.io Machines: run tokenproxy v0.1.16, one machine per user, in the
-  mainroom-user-machines app. Dockerfile.user-machine packages the binary.
-  Machines use port 8787, default to one shared CPU and 256 MB RAM, and are
-  configured to suspend when idle and start on incoming traffic.
-- Cloudflare R2/S3: stores uploaded authentication JSON files.
-- Clerk: provides user authentication and CLI OAuth sign-in.
+A Cloudflare Worker handles authentication, sharing, and routing to each user's
+Fly Machine running tokenproxy. Durable Objects store machine and sharing state,
+R2 stores credentials, Clerk handles sign-in, and a Bun/Hono container serves
+the backend API.
 
-User inference requests follow this path:
-
-<username>.mainroom.sh -> Cloudflare Worker -> user's Fly Machine -> upstream
-
-The Worker selects the user's machine with Fly's fly-force-instance-id header.
-On every boot, the machine uses its existing client credential to fetch fresh
-configuration from /v0/tokenproxy/config/me into a private local file, then
-starts tokenproxy with that file. The endpoint derives the user from the
-credential. Existing machines receive the new startup command in place.
-See src/fly-machines.ts and src/worker.ts for lifecycle and routing.
-
-## Connecting and recovering Codex accounts
-
-mainroom auth signup
-mainroom codex sync
-mainroom codex status
-mainroom codex reauth --account <filename.json>
-mainroom codex disable <filename.json>
-
-Mainroom sign-in identifies your Mainroom account. Codex sign-in authorizes the
-upstream account used by your remote tokenproxy. Renewing a Mainroom login does
-not renew a rejected Codex credential.
-
-codex status checks each stored account even when tokenproxy cannot start.
-It reports ready, reauth_required, disabled, invalid, or unavailable. Only an
-upstream 401 is classified as requiring reauth; network errors, rate limits,
-and other upstream failures remain unavailable. Status does not run inference.
-
-codex reauth uses the official Codex CLI, which must be installed locally.
-It opens a fresh sign-in session in a private temporary directory, checks the
-selected account identity, and uploads the refreshed credential to the same
-remote filename. Your usual local Codex login is preserved. Use --device-auth
-for device-code sign-in. With multiple stored accounts, choose one interactively
-or pass --account. A disabled account is enabled again after validation.
-
-One invalid enabled account can prevent tokenproxy from starting. codex disable
-keeps that account's credential but excludes it from future configurations.
-It stops the current machine, including any suspended snapshot, so a previous
-configuration cannot keep using the disabled account. This interrupts active
-requests. Use --yes to skip the confirmation in scripts.
-
-After sync, reauth, or disable, Mainroom checks every enabled account, reloads
-the remote configuration, and verifies a completed inference response using a
-Codex-supported model. If another account needs attention, it names the account
-and provides recovery commands. If no accounts remain enabled, it leaves the
-machine stopped and reports that an account must be connected. A saved credential
-or an HTTP 200 alone is not reported as successful inference.
-
-Users do not need the tokenproxy CLI locally. The remote machine runs it.
-
-## Development and deployment
-
-The homepage serves an agent setup prompt directly; /docs remains the interactive
-API reference. Public guides live at /guides, and /SKILL.md contains the setup
-instructions. Each guide supports a .md URL and Accept: text/markdown.
-/llms.txt, /llms-full.txt, /sitemap.xml, /robots.txt, and /.well-known/api-catalog
-provide discovery and exports. These public routes run in both the Worker and Bun
-server; Worker requests do not need to wake the container to read them.
-
-Page components live in src/site as server-rendered Hono TSX. Tailwind CSS and
-its typography plugin provide the styling; src/site/tailwind.css contains only
-Tailwind directives and theme tokens. Compiled CSS in src/generated is ignored
-by Git and rebuilt for local startup, Docker, CI, and Wrangler deployment.
-
-Edit the Markdown sources in src/content to update both HTML guides and exports.
-The generated OpenAPI covers container API routes; src/content/api.md documents
-the additional Worker routes. Keep guide examples aligned with the CLI and route
-implementations. Private API paths and user subdomains are excluded from crawling;
-authentication, not robots.txt, protects private content.
-
-Use Bun; CI pins Bun 1.3.14. Copy .env.example to .env and configure the
-services needed for local work. Keep credentials out of version control.
-
-bun install --frozen-lockfile
-bun run dev
-bun run build:css
-bun run typecheck
-bun run lint
-bun test
-
-bun run dev watches both Tailwind sources and the Bun API. It does not start
-the complete Worker/Fly deployment.
-Production Fly settings and required Worker secrets are in wrangler.jsonc;
-.env.example does not list every production requirement.
-
-Pushes to main run CI. Successful CI on main triggers the Deploy workflow,
-which ensures proxied DNS records, deploys the Worker and Cloudflare Container,
-and runs smoke checks. The Fly tokenproxy image is configured separately in
-wrangler.jsonc and built from Dockerfile.user-machine.
-
-## Outage investigation: September 6, 2026, approximately 05:15 UTC
-
-These findings are a dated snapshot, not a live service status.
-
-- Cloudflare's API reported that the mainroom Worker did not exist and that
-  mainroom.sh had no Worker routes. The dashboard also lacked the Worker.
-- The root and wildcard DNS records still pointed to proxied AAAA 100::.
-  This is the placeholder created by .github/scripts/ensure-cloudflare-dns.sh;
-  it depends on the Worker intercepting requests. Without the Worker and its
-  routes, requests fall through to that placeholder and return HTTP 522.
-- Both Google and Cloudflare DNS resolvers agreed. Direct probes of both
-  advertised Cloudflare IPv4 addresses returned 522 for the root and the
-  Worker-only /v0/auth/cli/config endpoint. HTTPS and HTTP-to-HTTPS redirection
-  worked; /cdn-cgi/trace returned 200. Root, health, ping, and user inference
-  probes failed, while clerk.mainroom.sh returned 200.
-- A direct Fly probe woke the existing user machine. Its logs showed that
-  tokenproxy failed to fetch its configuration from mainroom.sh with HTTP 522,
-  exited with code 1, and left the machine stopped.
-- The saved Fly startup configuration URL expired June 23, 2026 at 13:32:10
-  UTC. The code issues these URLs for ten minutes and rejects expired URLs
-  with 401. Existing-machine startup does not replace the saved startup URL,
-  so restoring the Worker alone does not resolve that restart problem.
-- The last successful deployment was June 23, 2026, for commit 8b26ff7:
-  https://github.com/cs50victor/mainroom/actions/runs/28029613753
-- Wrangler and cloudflared were installed. Wrangler's saved OAuth login had
-  expired, but the project Cloudflare API token and Fly CLI authentication
-  worked. The Cloudflare token lacked audit-log access, so the time, actor,
-  and reason behind the Worker's disappearance remain unknown.
-
-Recovery began September 6, 2026. Restore the Worker, routes, secrets, and required
-bindings; check retained Durable Object state before reconnecting existing
-Fly machines. Address the expired startup configuration URL, then verify
-Worker-only routes, /health, machine startup, and authenticated inference.
-Audit-log read access is needed to investigate the Worker's disappearance.
+For local setup, code reuse, test standards, and PR checks, see
+[CONTRIBUTING.md](CONTRIBUTING.md).

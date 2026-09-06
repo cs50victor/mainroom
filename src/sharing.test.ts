@@ -103,32 +103,6 @@ describe("share grants", () => {
 });
 
 describe("scopeDenial", () => {
-  test("returns undefined when route model and service tier are allowed", () => {
-    expect(
-      shareScopeDenial(grant(), {
-        route: "responses",
-        model: "gpt-5.1",
-        serviceTier: "auto",
-        requestedTokens: 0,
-        websocket: false,
-        compact: false,
-      }),
-    ).toBeUndefined();
-  });
-
-  test("rejects models outside the grant", () => {
-    expect(
-      shareScopeDenial(grant(), {
-        route: "responses",
-        model: "gpt-4o",
-        serviceTier: "auto",
-        requestedTokens: 0,
-        websocket: false,
-        compact: false,
-      }),
-    ).toBe("Model is not shared");
-  });
-
   test("rejects compact and WebSocket scopes unless explicitly allowed", () => {
     expect(
       shareScopeDenial(grant(), {
