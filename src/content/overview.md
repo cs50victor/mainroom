@@ -1,14 +1,24 @@
 # Mainroom
 
-Mainroom lets friends and research groups pool inference capacity from their subscriptions. Share the cost of access across your group, even when some members use more inference than others.
+## Your AI subscriptions. Better together.
 
-Each member has a node and one endpoint at `https://<username>.mainroom.sh/v1`. That node can route requests through their own connected accounts and the nodes shared with them. Providers choose who gets access, which models they can use, and any usage limits. Contributions and usage do not need to be equal; the group agrees how to split subscription costs.
+Bring your subscriptions together with friends. Share the cost, and access your own accounts and theirs through one endpoint.
+
+## Different workloads. Shared capacity.
+
+Some days you need more. Other days, your friends do. Mainroom connects your subscriptions so your group can make more of the capacity you already pay for.
+
+Each member has a node and one endpoint at `https://<username>.mainroom.sh/v1`. That node can route requests through their own connected accounts and the nodes shared with them. Friends and research groups can contribute and use different amounts of capacity, and agree how to split subscription costs.
 
 For example, Alice and Bob connect their Codex accounts and grant each other access. Each keeps using their own endpoint, now backed by both local accounts and the friend's node. They can also share with a researcher who only consumes capacity. Subscription credentials stay with the provider's Mainroom setup.
 
-## Set up with an agent
+## You choose what to share.
 
-Give your coding agent this prompt:
+Choose who can use your node, which models they can access, and the limits that work for you.
+
+## Set up with your agent
+
+Paste this into your coding agent to get started:
 
 ```text
 Set up Mainroom for me: https://mainroom.sh/SKILL.md

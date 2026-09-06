@@ -16,7 +16,7 @@ import { mainroomVersion } from "./version";
 const origin = "https://mainroom.sh";
 const prompt = `Set up Mainroom for me: ${origin}/SKILL.md`;
 const description =
-  "Pool inference capacity with friends. Combine your subscriptions through shared nodes and use one endpoint. Set up Mainroom with your coding agent.";
+  "Bring your subscriptions together with friends. Share the cost, and access your own accounts and theirs through one endpoint.";
 const pages = [
   { path: "/guides", title: "Mainroom guides", content: overview },
   {
@@ -150,20 +150,21 @@ function layout(
 }
 
 const homepage = layout(
-  "Mainroom | Shared subscriptions. One endpoint.",
+  "Mainroom | Your AI subscriptions. Better together.",
   "/",
   "/index.md",
   html`<main id="main" class="hero">
     <div class="hero-inner">
-      <p class="eyebrow">INFERENCE WITH FRIENDS</p>
-      <h1>Shared subscriptions.<br />One endpoint.</h1>
+      <p class="eyebrow">AI WITH FRIENDS</p>
+      <h1>Your AI subscriptions.<br />Better together.</h1>
       <p class="intro">
-        Pool inference capacity with friends or your research group.<br />
-        Share the cost. Use what you need.
+        Bring your subscriptions together with friends.<br />
+        Share the cost, and access your own accounts and theirs through one
+        endpoint.
       </p>
       <div class="prompt-group">
         <div class="prompt-tab">
-          <span class="agent-mark" aria-hidden="true">&gt;_</span> Build with
+          <span class="agent-mark" aria-hidden="true">&gt;_</span> Set up with
           your agent
         </div>
         <div class="prompt-card">
@@ -200,7 +201,7 @@ const homepage = layout(
           role="status"
           aria-live="polite"
         >
-          Copy the prompt into your coding agent to get started.
+          Paste this into your coding agent to get started.
         </p>
       </div>
       <a class="manual-link" href="/guides/getting-started"
