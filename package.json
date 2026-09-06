@@ -28,6 +28,7 @@
     "fast-xml-parser": "^5.9.3",
     "hono": "^4.12.25",
     "hono-zod-openapi": "^1.1.1",
+    "marked": "^18.0.11",
     "oauth4webapi": "^3.8.6",
     "smol-toml": "^1.7.0",
     "zod": "^4.4.3"

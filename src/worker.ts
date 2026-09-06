@@ -26,6 +26,7 @@ import {
   type FlyMachine,
 } from "./fly-machines";
 import { apiKeySchema } from "./schemas/api-keys";
+import { createPublicSite } from "./public-site";
 import {
   authorizeShareGrant,
   inFlightKey,
@@ -1780,6 +1781,7 @@ function r2Endpoint(accountId: string | undefined): string | undefined {
 }
 
 const workerApp = new Hono<{ Bindings: Env }>();
+workerApp.route("/", createPublicSite());
 
 /*
  * USE WORKERS FOR PUBLIC CONTROL-PLANE ROUTES, NOT CONTAINERS.

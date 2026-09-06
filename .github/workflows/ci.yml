@@ -19,6 +19,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run lint
       - run: bun run typecheck
+      - run: bun test
       - run: docker build -t mainroom-bun-server .
       - run: docker build -f Dockerfile.user-machine -t mainroom-user-machine .
       - name: Smoke test Docker image

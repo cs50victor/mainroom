@@ -8,5 +8,5 @@
     "target": "ESNext",
     "types": ["@cloudflare/workers-types"]
   },
-  "include": ["src/worker.ts"]
+  "include": ["src/worker.ts", "src/content.d.ts"]
 }

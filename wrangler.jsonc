@@ -4,6 +4,9 @@
   "main": "src/worker.ts",
   "compatibility_date": "2026-06-16",
   "workers_dev": false,
+  "rules": [
+    { "type": "Text", "globs": ["**/*.md", "**/*.css"], "fallthrough": true },
+  ],
   "observability": {
     "enabled": true,
   },
