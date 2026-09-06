@@ -4,6 +4,17 @@
   "main": "src/worker.ts",
   "compatibility_date": "2026-06-16",
   "workers_dev": false,
+  "build": {
+    "command": "bun run build:css",
+    "watch_dir": ["src/site"],
+  },
+  "rules": [
+    {
+      "type": "Text",
+      "globs": ["**/*.md", "**/*.css", "**/copy-prompt.js"],
+      "fallthrough": true,
+    },
+  ],
   "observability": {
     "enabled": true,
   },

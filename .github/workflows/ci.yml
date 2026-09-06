@@ -17,8 +17,10 @@ jobs:
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
+      - run: bun run build:css
       - run: bun run lint
       - run: bun run typecheck
+      - run: bun test
       - run: docker build -t mainroom-bun-server .
       - run: docker build -f Dockerfile.user-machine -t mainroom-user-machine .
       - name: Smoke test Docker image
@@ -27,6 +29,10 @@ jobs:
           trap 'docker stop mainroom-ci' EXIT
           for attempt in 1 2 3 4 5 6 7 8 9 10; do
             if curl -fsS http://127.0.0.1:3000/health; then
+              curl -fsS http://127.0.0.1:3000/ > /tmp/mainroom-home.html
+              curl -fsS http://127.0.0.1:3000/site.css > /tmp/mainroom-site.css
+              test -s /tmp/mainroom-home.html
+              test -s /tmp/mainroom-site.css
               curl -fsS -H 'Authorization: Bearer ci-token' http://127.0.0.1:3000/v0/ping
               exit 0
             fi

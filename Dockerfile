@@ -12,12 +12,14 @@ FROM base AS prerelease
 COPY --from=install /temp/dev/node_modules node_modules
 COPY . .
 ENV NODE_ENV=production
+RUN bun run build:css
 RUN bun run typecheck
 
 FROM base AS release
 COPY --from=install /temp/prod/node_modules node_modules
 COPY --from=prerelease /usr/src/app/src src
 COPY --from=prerelease /usr/src/app/package.json package.json
+COPY --from=prerelease /usr/src/app/tsconfig.json tsconfig.json
 
 ENV NODE_ENV=production
 ENV PORT=3000

@@ -6,7 +6,9 @@
     "skipLibCheck": true,
     "strict": true,
     "target": "ESNext",
-    "types": ["@cloudflare/workers-types"]
+    "types": ["@cloudflare/workers-types"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "hono/jsx"
   },
-  "include": ["src/worker.ts"]
+  "include": ["src/worker.ts", "src/content.d.ts"]
 }
