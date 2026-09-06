@@ -6,7 +6,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 const jwt = (claims: object) =>
-  `header.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.signature`;
+  `eyJhbGciOiJSUzI1NiJ9.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.signature`;
 const credential = JSON.stringify({
   tokens: {
     account_id: "account-a",

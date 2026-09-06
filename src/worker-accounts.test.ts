@@ -113,7 +113,12 @@ async function fixture() {
       }),
     },
   } as unknown as Parameters<typeof worker.fetch>[1];
-  const call = (path: string, enabled?: boolean, token = "test-mainroom-key") =>
+  const call = (
+    path: string,
+    enabled?: boolean,
+    token = "test-mainroom-key",
+    override: RequestInit = {},
+  ) =>
     worker.fetch(
       new Request(`https://mainroom.sh${path}`, {
         method: enabled === undefined ? "GET" : "PATCH",
@@ -122,6 +127,7 @@ async function fixture() {
           "content-type": "application/json",
         },
         body: enabled === undefined ? undefined : JSON.stringify({ enabled }),
+        ...override,
       }),
       env,
       {} as Parameters<typeof worker.fetch>[2],
@@ -151,6 +157,37 @@ test("account status is owner scoped and never returns stored tokens", async () 
   expect(
     (await f.call("/v0/tokenproxy/accounts/other.json", false)).status,
   ).toBe(404);
+});
+
+test("Hono rejects malformed account updates before reading or changing credentials", async () => {
+  const f = await fixture();
+  for (const body of [
+    '{"enabled":',
+    '{"enabled":"false"}',
+    "null",
+    "[]",
+    "{}",
+  ]) {
+    const response = await f.call(
+      "/v0/tokenproxy/accounts/saved.json",
+      false,
+      undefined,
+      { body },
+    );
+    expect(response.status).toBe(400);
+    expect(typeof (await response.json()).error).toBe("string");
+  }
+  const unauthorized = await f.call(
+    "/v0/tokenproxy/accounts/saved.json",
+    false,
+    "bad",
+    { body: "invalid" },
+  );
+  expect(unauthorized.status).toBe(401);
+  expect(f.stats()).toEqual({ providerCalls: 0, stops: 0 });
+  expect(
+    f.objects.has("settings/tokenproxy/disabled/account-owner/saved.json"),
+  ).toBe(false);
 });
 
 test("disable retains credential, stops runtime, and excludes account from boot config", async () => {

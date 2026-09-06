@@ -105,7 +105,7 @@ async function recoveryCase(
       const home = process.env.CODEX_HOME!;
       await Bun.write(process.env.TEST_RECORD!, JSON.stringify({ home, mode: (await stat(home)).mode & 0o777, args: process.argv.slice(2) }));
       if (process.env.TEST_MODE === "cancelled") process.exit(7);
-      const jwt = (value: unknown) => "header." + Buffer.from(JSON.stringify(value)).toString("base64url") + ".signature";
+      const jwt = (value: unknown) => "eyJhbGciOiJSUzI1NiJ9." + Buffer.from(JSON.stringify(value)).toString("base64url") + ".signature";
       const email = process.env.TEST_MODE === "wrong-email" ? "other@example.test" : "owner@example.test";
       await Bun.write(home + "/auth.json", JSON.stringify({
         auth_mode: "chatgpt", last_refresh: new Date().toISOString(),

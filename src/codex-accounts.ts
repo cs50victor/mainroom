@@ -1,12 +1,5 @@
-export type CodexAccountStatus = {
-  uploadName: string;
-  accountId?: string;
-  email?: string;
-  expiresAt?: string;
-  models?: string[];
-  status: "ready" | "reauth_required" | "disabled" | "invalid" | "unavailable";
-  detail?: string;
-};
+import { decode } from "hono/jwt";
+import type { CodexAccountStatus } from "./schemas/codex-accounts";
 
 export function codexAuthIdentity(text: string):
   | {
@@ -61,13 +54,8 @@ function record(value: unknown): Record<string, unknown> | undefined {
 function jwtClaims(token: unknown): Record<string, unknown> | undefined {
   if (typeof token !== "string") return undefined;
   try {
-    const payload = token.split(".")[1];
-    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
-    const bytes = Uint8Array.from(atob(base64), (character) =>
-      character.charCodeAt(0),
-    );
-    const value = JSON.parse(new TextDecoder().decode(bytes));
-    return record(value);
+    // Claims are display metadata; provider requests determine credential validity.
+    return record(decode(token).payload);
   } catch {
     return undefined;
   }

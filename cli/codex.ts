@@ -1,7 +1,7 @@
 import { checkbox, confirm, select } from "@inquirer/prompts";
 import { chmod, mkdtemp, readdir, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { z } from "zod";
 import {
   fetchCodexAccounts,
@@ -17,10 +17,8 @@ import type {
   CodexSyncOptions,
   Credentials,
 } from "./types";
-import {
-  codexAuthIdentity,
-  type CodexAccountStatus,
-} from "../src/codex-accounts";
+import { codexAuthIdentity } from "../src/codex-accounts";
+import type { CodexAccountStatus } from "../src/schemas/codex-accounts";
 import { verifyInference } from "./inference";
 
 const cliProxyDir = ".cli-proxy-api";
@@ -492,7 +490,7 @@ async function readCodexAuthCandidate(
 }
 
 async function readCliProxyCodexAuthCandidates(): Promise<AuthCandidate[]> {
-  const dir = join(homeDir(), cliProxyDir);
+  const dir = join(homedir(), cliProxyDir);
 
   let entries: string[];
   try {
@@ -533,13 +531,7 @@ function codexAuthPath(): string {
   const codexHome = Bun.env.CODEX_HOME;
   if (codexHome) return join(codexHome, codexAuthFile);
 
-  return join(homeDir(), ".codex", codexAuthFile);
-}
-
-function homeDir(): string {
-  const home = Bun.env.HOME;
-  if (!home) throw new Error("HOME is required to find Codex auth files");
-  return home;
+  return join(homedir(), ".codex", codexAuthFile);
 }
 
 function isFutureDate(value: string): boolean {

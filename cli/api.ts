@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { errorMessage } from "./errors";
 import type { CliExchangeParams, CliOAuthConfig } from "./types";
+import {
+  codexAccountsSchema,
+  codexAccountUpdatedSchema,
+} from "../src/schemas/codex-accounts";
 
 type RequestOptions = {
   body?: BodyInit;
@@ -42,27 +46,6 @@ const jsonUploadResponseSchema = z.object({
 
 type RequestResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
-const codexAccountsSchema = z.object({
-  username: z.string().optional(),
-  accounts: z.array(
-    z.object({
-      uploadName: z.string(),
-      accountId: z.string().optional(),
-      email: z.string().optional(),
-      expiresAt: z.string().optional(),
-      models: z.array(z.string()).optional(),
-      status: z.enum([
-        "ready",
-        "reauth_required",
-        "disabled",
-        "invalid",
-        "unavailable",
-      ]),
-      detail: z.string().optional(),
-    }),
-  ),
-});
-
 export function fetchCodexAccounts(apiUrl: string, token: string) {
   return requestJson(apiUrl, "/v0/tokenproxy/accounts", codexAccountsSchema, {
     token,
@@ -78,7 +61,7 @@ export function setCodexAccountEnabled(
   return requestJson(
     apiUrl,
     `/v0/tokenproxy/accounts/${encodeURIComponent(uploadName)}`,
-    z.object({ uploadName: z.string(), enabled: z.boolean() }),
+    codexAccountUpdatedSchema,
     {
       token,
       method: "PATCH",

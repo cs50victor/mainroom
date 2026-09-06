@@ -1,3 +1,13 @@
+import { EventSourceParserStream } from "eventsource-parser/stream";
+import { z } from "zod";
+
+const completedResponseSchema = z.object({ status: z.literal("completed") });
+const responseEventSchema = z.object({
+  type: z.string(),
+  response: z.object({ status: z.string() }).optional(),
+});
+const modelsSchema = z.object({ data: z.array(z.object({ id: z.string() })) });
+
 export async function verifyInference(
   apiUrl: string,
   token: string,
@@ -16,10 +26,8 @@ export async function verifyInference(
   });
   if (!models.ok)
     throw new Error(`Model endpoint returned HTTP ${models.status}`);
-  const data = (await models.json()) as { data?: { id?: unknown }[] };
-  const model = data.data?.find(
-    (item) => typeof item.id === "string" && codexModels.includes(item.id),
-  )?.id;
+  const data = modelsSchema.parse(await models.json());
+  const model = data.data.find((item) => codexModels.includes(item.id))?.id;
   if (typeof model !== "string")
     throw new Error("The endpoint has no usable models");
   const response = await fetch(new URL("/v1/responses", base), {
@@ -44,26 +52,33 @@ export async function verifyInference(
 export async function hasCompletedResponse(
   response: Response,
 ): Promise<boolean> {
-  const text = await response.text();
   if (response.headers.get("content-type")?.includes("application/json")) {
+    return completedResponseSchema.safeParse(
+      await response.json().catch(() => undefined),
+    ).success;
+  }
+  if (!response.body) return false;
+  const events = response.body
+    .pipeThrough(new TextDecoderStream())
+    .pipeThrough(new EventSourceParserStream({ maxBufferSize: 1024 * 1024 }));
+  for await (const message of events) {
+    if (message.data === "[DONE]") return false;
+    let value: unknown;
     try {
-      return JSON.parse(text).status === "completed";
+      value = JSON.parse(message.data);
     } catch {
       return false;
     }
-  }
-  for (const line of text.split(/\r?\n/)) {
-    if (!line.startsWith("data:")) continue;
-    try {
-      const event = JSON.parse(line.slice(5).trim());
-      if (
-        event.type === "response.completed" &&
-        event.response?.status === "completed"
+    const event = responseEventSchema.safeParse(value);
+    if (!event.success) return false;
+    if (event.data.type === "response.completed")
+      return completedResponseSchema.safeParse(event.data.response).success;
+    if (
+      ["response.failed", "response.incomplete", "error"].includes(
+        event.data.type,
       )
-        return true;
-    } catch {
-      /* Ignore SSE keepalives and the terminal marker. */
-    }
+    )
+      return false;
   }
   return false;
 }
