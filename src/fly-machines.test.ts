@@ -47,9 +47,8 @@ describe("startFlyMachine", () => {
       if (calls.length === 2) {
         expect(JSON.parse(String(init?.body))).toEqual({
           config: { ...config, init: { exec } },
-          skip_launch: true,
         });
-        return Response.json({ state: "stopped" });
+        return Response.json({ state: "replacing" });
       }
       if (calls.length === 3) return new Response(null, { status: 204 });
       return Response.json({ state: "started" });
@@ -61,10 +60,12 @@ describe("startFlyMachine", () => {
     expect(calls.map((call) => call.init?.method ?? "GET")).toEqual([
       "GET",
       "POST",
-      "POST",
+      "GET",
       "GET",
     ]);
-    expect(calls[2].url).toEndWith("/machines/machine-id/start");
+    expect(calls[2].url).toEndWith(
+      "/machines/machine-id/wait?state=started&timeout=30",
+    );
   });
 
   test("leaves a running machine with current startup configuration untouched", async () => {

@@ -53,16 +53,17 @@ export async function startFlyMachine(
   if (!machine.config) throw new Error("Fly machine configuration is missing");
 
   if (JSON.stringify(machine.config.init?.exec) !== JSON.stringify(exec)) {
-    machine = await flyMachineApi<FlyMachine>(fly, path, {
+    await flyMachineApi<FlyMachine>(fly, path, {
       method: "POST",
       body: JSON.stringify({
         config: {
           ...machine.config,
           init: { ...machine.config.init, exec },
         },
-        skip_launch: true,
       }),
     });
+    await flyMachineApi(fly, `${path}/wait?state=started&timeout=30`);
+    return flyMachineApi<FlyMachine>(fly, path);
   }
 
   if (machine.state !== "started" && machine.state !== "starting") {
