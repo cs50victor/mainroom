@@ -39,7 +39,7 @@ that a change works.
 
 ## Work locally
 
-Use Bun 1.3.14, matching CI. The tests also use Bash and curl on macOS or Linux;
+Use Bun 1.3.14 and Node.js 22+, matching CI. The tests also use Bash and curl on macOS or Linux;
 Docker is needed for the container checks. Local tests use fixtures and do not
 require production credentials or an installed tokenproxy CLI.
 
@@ -70,6 +70,7 @@ exports share the same source.
 ## Verify and open a PR
 
 Run related tests while iterating, for example `bun test cli/inference.test.ts`.
+For sharing changes, run the [stream and quota stress suite](test/SHARING.md).
 Before requesting review, run the checks in [.github/workflows/ci.yml](.github/workflows/ci.yml):
 
 ```sh

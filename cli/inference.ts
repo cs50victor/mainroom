@@ -4,7 +4,7 @@ import { z } from "zod";
 const completedResponseSchema = z.object({ status: z.literal("completed") });
 const responseEventSchema = z.object({
   type: z.string(),
-  response: z.object({ status: z.string() }).optional(),
+  response: z.object({ status: z.string().optional() }).optional(),
 });
 const modelsSchema = z.object({ data: z.array(z.object({ id: z.string() })) });
 

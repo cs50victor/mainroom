@@ -47,6 +47,8 @@
     "@types/bun": "^1.3.14",
     "@types/write-file-atomic": "^4.0.3",
     "concurrently": "^10.0.5",
+    "esbuild": "0.27.3",
+    "miniflare": "4.20260611.0",
     "msw": "2.13.6",
     "prettier": "^3.8.4",
     "tailwindcss": "^4.3.3",
