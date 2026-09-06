@@ -16,7 +16,7 @@ import { mainroomVersion } from "./version";
 const origin = "https://mainroom.sh";
 const prompt = `Set up Mainroom for me: ${origin}/SKILL.md`;
 const description =
-  "Your accounts. One inference endpoint. Set up Mainroom with your coding agent.";
+  "Pool inference capacity with friends. Combine your subscriptions through shared nodes and use one endpoint. Set up Mainroom with your coding agent.";
 const pages = [
   { path: "/guides", title: "Mainroom guides", content: overview },
   {
@@ -150,14 +150,17 @@ function layout(
 }
 
 const homepage = layout(
-  "Mainroom | Your accounts. One endpoint.",
+  "Mainroom | Shared subscriptions. One endpoint.",
   "/",
   "/index.md",
   html`<main id="main" class="hero">
     <div class="hero-inner">
-      <p class="eyebrow">PERSONAL INFERENCE</p>
-      <h1>Your accounts.<br />One endpoint.</h1>
-      <p class="intro">Bring your accounts. Let your agent handle the setup.</p>
+      <p class="eyebrow">INFERENCE WITH FRIENDS</p>
+      <h1>Shared subscriptions.<br />One endpoint.</h1>
+      <p class="intro">
+        Pool inference capacity with friends or your research group.<br />
+        Share the cost. Use what you need.
+      </p>
       <div class="prompt-group">
         <div class="prompt-tab">
           <span class="agent-mark" aria-hidden="true">&gt;_</span> Build with
@@ -268,7 +271,7 @@ export function createPublicSite(): Hono {
     site.get(`${page.path}/`, (c) => c.redirect(page.path, 308));
   }
 
-  const index = `# Mainroom\n\n> Personal inference endpoints backed by connected accounts.\n\nPublic API origin: ${origin}. Inference base URL: https://<username>.mainroom.sh/v1.\n\n## Setup\n\n- [Mainroom setup skill](${origin}/SKILL.md): Install, sign in, sync accounts, and verify inference.\n\n## Guides\n\n${pages.map((page) => `- [${page.title}](${origin}${page.path}.md)`).join("\n")}\n\n## API\n\n- [OpenAPI](${origin}/openapi.json): Generated container API schema; additional Worker routes are covered in the API and sharing guide.\n- [API catalog](${origin}/.well-known/api-catalog): API discovery.\n\n## Optional\n\n- [Complete documentation](${origin}/llms-full.txt): All guides and the setup skill in one file.\n- [Source](https://github.com/cs50victor/mainroom)\n`;
+  const index = `# Mainroom\n\n> Pool subscription inference capacity with friends or research groups. Each member uses one endpoint backed by their own accounts and shared peer nodes.\n\nPublic API origin: ${origin}. Inference base URL: https://<username>.mainroom.sh/v1.\n\n## Setup\n\n- [Mainroom setup skill](${origin}/SKILL.md): Install, contribute accounts, connect friends' nodes, and verify shared inference.\n\n## Guides\n\n${pages.map((page) => `- [${page.title}](${origin}${page.path}.md)`).join("\n")}\n\n## API\n\n- [OpenAPI](${origin}/openapi.json): Generated container API schema; additional Worker routes are covered in the API and sharing guide.\n- [API catalog](${origin}/.well-known/api-catalog): API discovery.\n\n## Optional\n\n- [Complete documentation](${origin}/llms-full.txt): All guides and the setup skill in one file.\n- [Source](https://github.com/cs50victor/mainroom)\n`;
   const full = `${pages.map((page) => `Source: ${origin}${page.path}\n\n${page.content.trim()}`).join("\n\n---\n\n")}\n\n---\n\nSource: ${origin}/SKILL.md\n\n${skill}`;
 
   for (const [path, content] of [

@@ -3,10 +3,16 @@
 https://mainroom.sh
 https://github.com/cs50victor/mainroom
 
-Mainroom gives users personal token inference endpoints, such as
-https://victor.mainroom.sh/v1/responses. The CLI handles sign-in and uploads
-Codex authentication files; the backend manages tokenproxy configuration,
-user machines, and sharing between users.
+Mainroom lets friends and research groups pool subscription inference capacity
+and share costs, even when members contribute or consume different amounts.
+Each person keeps one endpoint, such as https://victor.mainroom.sh/v1/responses,
+backed by their own accounts and nodes shared with them. Providers control access
+and usage limits; the group agrees how to split subscription costs.
+
+The CLI handles sign-in and uploads selected Codex authentication files. The
+backend combines those accounts and incoming peer grants in each node's
+tokenproxy configuration. Mutual sharing uses a separate grant in each direction;
+friends use their own Mainroom keys without exchanging subscription credentials.
 
 ## Architecture
 

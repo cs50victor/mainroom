@@ -2,6 +2,8 @@
 
 Your inference base URL is `https://<username>.mainroom.sh/v1`. Replace `<username>` with your Mainroom username. The root domain `https://mainroom.sh` hosts the control-plane API and documentation; it is not an inference base URL.
 
+This is your single entry point to the pool: your node's configuration combines your own connected accounts with active grants from friends. Your client can keep the same URL as providers join or leave. Each provider controls the access and limits on their node.
+
 ## Discover available models
 
 Set `MAINROOM_USERNAME` and `MAINROOM_API_KEY` in your local environment, then request the models available to your account:
@@ -28,9 +30,11 @@ jq -n --arg model "$MAINROOM_MODEL" \
 
 Inference is forwarded to tokenproxy. Configure your client's base URL and authentication according to that client's supported settings; do not assume every client uses the same configuration keys.
 
-## Shared endpoints
+## Using your group's capacity
 
-To use another user's endpoint, send your own Mainroom API key to that user's subdomain. The provider must grant access to your username and permit the requested model, route, service tier, and optional features. See [API and sharing](https://mainroom.sh/guides/api).
+When a friend grants you access, Mainroom adds their node as a peer account in your configuration. Your node can select that peer when routing eligible requests. You continue using your own endpoint and API key. See [getting started](https://mainroom.sh/guides/getting-started) if you need to initialize a node without contributing an account.
+
+You can also call a provider's endpoint directly with your own Mainroom API key, for example to verify a new grant. The provider must grant access to your username and permit the requested model, route, service tier, and optional features. See [API and sharing](https://mainroom.sh/guides/api).
 
 ## Troubleshooting
 

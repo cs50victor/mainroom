@@ -1,6 +1,10 @@
 # Mainroom
 
-Mainroom gives you a personal inference endpoint backed by your connected accounts. Sign in with the CLI, sync your Codex authentication files, and connect your client to `https://<username>.mainroom.sh/v1`.
+Mainroom lets friends and research groups pool inference capacity from their subscriptions. Share the cost of access across your group, even when some members use more inference than others.
+
+Each member has a node and one endpoint at `https://<username>.mainroom.sh/v1`. That node can route requests through their own connected accounts and the nodes shared with them. Providers choose who gets access, which models they can use, and any usage limits. Contributions and usage do not need to be equal; the group agrees how to split subscription costs.
+
+For example, Alice and Bob connect their Codex accounts and grant each other access. Each keeps using their own endpoint, now backed by both local accounts and the friend's node. They can also share with a researcher who only consumes capacity. Subscription credentials stay with the provider's Mainroom setup.
 
 ## Set up with an agent
 
@@ -10,13 +14,13 @@ Give your coding agent this prompt:
 Set up Mainroom for me: https://mainroom.sh/SKILL.md
 ```
 
-The [Mainroom setup skill](https://mainroom.sh/SKILL.md) walks an agent through installation, sign-in, account sync, and verification.
+The [Mainroom setup skill](https://mainroom.sh/SKILL.md) walks an agent through installation, sign-in, contributing accounts, sharing with friends, and verifying the combined endpoint.
 
 ## Guides
 
-- [Getting started](https://mainroom.sh/guides/getting-started): Install the CLI and connect an account.
+- [Getting started](https://mainroom.sh/guides/getting-started): Set up a node and join your group's pool.
 - [Authentication](https://mainroom.sh/guides/authentication): Understand Mainroom credentials and sign-in.
-- [Inference](https://mainroom.sh/guides/inference): Connect a client to your personal endpoint.
+- [Inference](https://mainroom.sh/guides/inference): Use your own and shared capacity through one endpoint.
 - [API and sharing](https://mainroom.sh/guides/api): Find control-plane routes and manage sharing grants.
 - [Interactive API reference](https://mainroom.sh/docs): Explore the generated container API reference.
 

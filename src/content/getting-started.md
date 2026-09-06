@@ -1,6 +1,8 @@
 # Getting started
 
-Mainroom runs a personal inference endpoint at `https://<username>.mainroom.sh/v1`. You need a Mainroom account and an eligible, unexpired Codex authentication file to follow this setup.
+Set up Mainroom with friends or a research group to share subscription capacity. Each member signs in separately and uses one endpoint at `https://<username>.mainroom.sh/v1`, backed by their own accounts and nodes shared with them.
+
+You can contribute a Codex account, use capacity shared by a friend, or do both. Contributing requires an eligible, unexpired Codex authentication file. Members decide who shares with whom and how they split costs.
 
 ## Install the CLI
 
@@ -45,7 +47,9 @@ mainroom auth status
 mainroom ping
 ```
 
-## Connect your Codex account
+## Contribute your Codex account
+
+Follow this step on each contributing member's machine. If you only use capacity shared by friends, continue to the next step.
 
 ```sh
 mainroom codex sync
@@ -55,6 +59,21 @@ The CLI finds eligible local Codex authentication files and asks which ones to u
 
 Use `mainroom codex sync --yes` only when you intend to upload every eligible account without the selection prompt.
 
+## Connect your group's nodes
+
+Exchange Mainroom usernames with your group. Each provider grants access to the members they want to share with, choosing the models, routes, service tiers, and optional usage limits. Follow the [sharing walkthrough](https://mainroom.sh/guides/api) for the API requests.
+
+Grants are directional: Alice granting Bob access lets Bob use Alice's node. Bob grants Alice access separately to share both ways. Repeat for the members each provider wants to include. Each member keeps their own API key; friends do not exchange subscription credentials.
+
+Mainroom includes active incoming grants in your node's configuration. If you skipped account sync, initialize your node after a friend grants access. With your own Mainroom key in `MAINROOM_API_KEY`, run:
+
+```sh
+curl --fail-with-body -X POST https://mainroom.sh/v0/tokenproxy/config/reload \
+  -H "Authorization: Bearer ${MAINROOM_API_KEY}"
+```
+
+Grant changes reconcile an existing consumer node automatically. This reload also lets you retry a failed configuration update.
+
 ## Connect your client
 
-Use `https://<username>.mainroom.sh/v1` as your inference base URL and your Mainroom API key as the bearer credential. Follow the [inference guide](https://mainroom.sh/guides/inference) to discover models and verify a request.
+Use `https://<username>.mainroom.sh/v1` as your inference base URL and your Mainroom API key as the bearer credential. Keep that URL as your group adds or removes shared nodes. Follow the [inference guide](https://mainroom.sh/guides/inference) to discover models and verify a request.
