@@ -3,6 +3,13 @@
 import { Command } from "commander";
 import { authStatus, login, logout, ping } from "./auth";
 import { codexStatus, disableCodex, reauthCodex, syncCodex } from "./codex";
+import {
+  changeShare,
+  connectShares,
+  inviteFriend,
+  listShares,
+  positiveIntegerOption,
+} from "./shares";
 import { errorMessage } from "./errors";
 import {
   defaultApiUrl,
@@ -118,6 +125,50 @@ codexCommand
   .action((options: CodexSyncOptions) => runCommand(() => syncCodex(options)));
 
 program.addCommand(codexCommand);
+
+const shareCommand = program
+  .command("share")
+  .alias("friends")
+  .description("Share inference capacity with friends.")
+  .showHelpAfterError()
+  .action(() => runCommand(() => listShares({})));
+shareCommand
+  .command("invite <username>")
+  .description(
+    "Grant an existing Mainroom user access immediately; replaces an existing share.",
+  )
+  .option(
+    "--models <models...>",
+    "Models to share; prompts for ready Codex models when omitted",
+  )
+  .option(
+    "--requests-per-day <count>",
+    "Maximum requests per UTC day",
+    positiveIntegerOption,
+  )
+  .option("--service-tiers <tiers...>", "Allowed service tiers", ["auto"])
+  .option("--yes", "Apply the share without confirmation")
+  .action((username, options) =>
+    runCommand(() => inviteFriend(username, options)),
+  );
+shareCommand
+  .command("list")
+  .description("Show incoming and outgoing shares, limits, and recorded usage.")
+  .option("--json", "Print structured sharing data")
+  .action((options) => runCommand(() => listShares(options)));
+shareCommand
+  .command("connect")
+  .description("Add incoming shares to your endpoint configuration.")
+  .action(() => runCommand(connectShares));
+for (const action of ["enable", "disable", "revoke"] as const) {
+  shareCommand
+    .command(`${action} <username>`)
+    .description(`${action} a share you provide to a friend.`)
+    .option("--yes", "Apply the change without confirmation")
+    .action((username, options) =>
+      runCommand(() => changeShare(username, action, options)),
+    );
+}
 
 program
   .command("ping")

@@ -4,6 +4,47 @@ The Mainroom control-plane origin is `https://mainroom.sh`. Send JSON bodies wit
 
 ## Share with a friend
 
+Use the CLI with your friend's existing Mainroom username:
+
+```sh
+mainroom friends invite bob
+mainroom friends
+mainroom friends disable bob
+mainroom friends enable bob
+mainroom friends revoke bob
+```
+
+Invite prompts for ready Codex models and a daily request limit, then asks for
+confirmation. It grants access immediately and replaces any existing share for
+that friend. There is no email invitation or acceptance step. Bob must first
+sign up through Clerk and choose his username. For scripts or other providers,
+pass the models and limit explicitly:
+
+```sh
+mainroom friends invite bob --models <model-id> --requests-per-day 100 --yes
+```
+
+CLI invitations share the Responses route with the `auto` service tier;
+`--service-tiers` selects other allowed tiers. For other routes or additional
+limits, use the API below. Model selection is an allowlist, not an entitlement
+check. `mainroom friends` groups incoming and outgoing shares by friend, showing
+their status, models, limits, and today's recorded usage. Disabled and revoked
+shares stay visible. Use `mainroom friends list --json` for structured output.
+
+After receiving access, run `mainroom friends connect` to include active shares
+in your endpoint configuration, even if you have no Codex account of your own.
+This command updates configuration; use the [inference guide](https://mainroom.sh/guides/inference)
+to verify inference. `share` and `friends` are interchangeable.
+
+Sharing is directional. Only usage of shares involving your account is visible.
+The counters show requests admitted and requested output-token maxima reserved
+per UTC day, not actual tokens consumed or remaining subscription capacity.
+If a caller omits a token maximum, the existing counter records zero tokens.
+In-flight counts are tracked only for grants with a concurrency limit.
+Changes to a share can interrupt requests while the friend's node updates.
+
+### Using the API
+
 Sharing connects your group's nodes. A provider grants access to a friend's Mainroom username; the friend's node then includes the provider as a peer account. Each person can keep using one endpoint for their own and shared capacity.
 
 Suppose Alice wants to share with Bob. Both first create Mainroom accounts, and Alice syncs the Codex accounts she wants to contribute. On Alice's machine, set `MAINROOM_API_KEY` to Alice's key, `MAINROOM_CONSUMER` to Bob's actual username, and `MAINROOM_MODEL` and `MAINROOM_SERVICE_TIER` to a model and tier supported by Alice's node.
@@ -76,3 +117,15 @@ Optional fields are `supports_responses_ws`, `supports_compact`, and `limits`. L
 Daily limits use UTC days. The token limit counts the requested maximum tokens, not measured billing usage. Request fields use snake_case; returned grant records use camelCase. Updating a grant also reconciles the consumer's existing node.
 
 A PATCH request uses the body `{"status":"active"}` or `{"status":"disabled"}`. A consumer calls the provider's inference subdomain with the consumer's own key.
+
+Outgoing grant records include `usage` with `day`, `requests`,
+`reservedOutputTokens`, and `inFlight`. Incoming responses include all historical
+shares in `shares`, active shares in `providers`, and active routing metadata
+in `tokenproxy_accounts`; incoming entries include status, limits, and usage.
+No subscription credentials are returned by these lists.
+
+Successful mutations return the saved `grant` and a `reconcile` result.
+If `reconcile.error` is present, the grant was saved but the consumer's node
+could not be updated. The CLI reports this separately and exits with an error;
+the consumer can retry with `mainroom friends connect`, including after revocation
+to remove stale peer configuration.

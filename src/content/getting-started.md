@@ -61,15 +61,14 @@ Use `mainroom codex sync --yes` only when you intend to upload every eligible ac
 
 ## Connect your group's nodes
 
-Exchange Mainroom usernames with your group. Each provider grants access to the members they want to share with, choosing the models, routes, service tiers, and optional usage limits. Follow the [sharing walkthrough](https://mainroom.sh/guides/api) for the API requests.
+Exchange Mainroom usernames with your group. Run `mainroom friends invite <username>` to choose models and a daily request limit, then `mainroom friends` to see your friends, sharing status, and recorded usage in both directions. Follow the [sharing walkthrough](https://mainroom.sh/guides/api) for all commands and API options.
 
 Grants are directional: Alice granting Bob access lets Bob use Alice's node. Bob grants Alice access separately to share both ways. Repeat for the members each provider wants to include. Each member keeps their own API key; friends do not exchange subscription credentials.
 
-Mainroom includes active incoming grants in your node's configuration. If you skipped account sync, initialize your node after a friend grants access. With your own Mainroom key in `MAINROOM_API_KEY`, run:
+Mainroom includes active incoming grants in your node's configuration. If you skipped account sync, initialize your node after a friend grants access:
 
 ```sh
-curl --fail-with-body -X POST https://mainroom.sh/v0/tokenproxy/config/reload \
-  -H "Authorization: Bearer ${MAINROOM_API_KEY}"
+mainroom friends connect
 ```
 
 Grant changes reconcile an existing consumer node automatically. This reload also lets you retry a failed configuration update.

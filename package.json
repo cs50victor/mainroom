@@ -1,6 +1,6 @@
 {
   "name": "mainroom",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "type": "module",
   "bin": {
@@ -47,6 +47,7 @@
     "@types/bun": "^1.3.14",
     "@types/write-file-atomic": "^4.0.3",
     "concurrently": "^10.0.5",
+    "msw": "2.13.6",
     "prettier": "^3.8.4",
     "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3",
