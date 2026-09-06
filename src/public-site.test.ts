@@ -22,6 +22,9 @@ describe("public website", () => {
     const response = await site.request(`${origin}/docs`);
     expect(response.status).toBe(200);
     expect(await response.text()).toContain("/openapi.json");
+    expect(response.headers.get("Link")).toContain(
+      '/openapi.json>; rel="service-desc"',
+    );
   });
 
   test.each([

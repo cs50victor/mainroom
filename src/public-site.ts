@@ -286,9 +286,12 @@ export function createPublicSite(): Hono {
   site.get(
     "/docs",
     (c, next) => {
-      discoveryHeaders(c, "/docs", "/guides/api.md");
-      c.header("Vary", "Accept", { append: true });
-      if (markdownPreferred(c)) return markdownResponse(c, api);
+      discoveryHeaders(c, "/docs");
+      c.header(
+        "Link",
+        `<${origin}/openapi.json>; rel="service-desc"; type="application/json"`,
+        { append: true },
+      );
       return next();
     },
     Scalar({ url: "/openapi.json" }),
