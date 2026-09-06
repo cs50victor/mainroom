@@ -49,6 +49,11 @@ instructions. Each guide supports a .md URL and Accept: text/markdown.
 provide discovery and exports. These public routes run in both the Worker and Bun
 server; Worker requests do not need to wake the container to read them.
 
+Page components live in src/site as server-rendered Hono TSX. Tailwind CSS and
+its typography plugin provide the styling; src/site/tailwind.css contains only
+Tailwind directives and theme tokens. Compiled CSS in src/generated is ignored
+by Git and rebuilt for local startup, Docker, CI, and Wrangler deployment.
+
 Edit the Markdown sources in src/content to update both HTML guides and exports.
 The generated OpenAPI covers container API routes; src/content/api.md documents
 the additional Worker routes. Keep guide examples aligned with the CLI and route
@@ -60,11 +65,13 @@ services needed for local work. Keep credentials out of version control.
 
 bun install --frozen-lockfile
 bun run dev
+bun run build:css
 bun run typecheck
 bun run lint
 bun test
 
-bun run dev starts the Bun API, not the complete Worker/Fly deployment.
+bun run dev watches both Tailwind sources and the Bun API. It does not start
+the complete Worker/Fly deployment.
 Production Fly settings and required Worker secrets are in wrangler.jsonc;
 .env.example does not list every production requirement.
 

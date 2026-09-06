@@ -27,6 +27,35 @@ describe("public website", () => {
     );
   });
 
+  test("serves compiled styles and the external setup script", async () => {
+    const css = await site.request(`${origin}/site.css`);
+    expect(css.status).toBe(200);
+    expect(css.headers.get("Content-Type")).toStartWith("text/css");
+    const styles = await css.text();
+    expect(styles).toContain("tailwindcss");
+    expect(styles).not.toContain("@import");
+    expect(styles).not.toContain("@source");
+
+    const script = await site.request(`${origin}/site.js`);
+    expect(script.status).toBe(200);
+    expect(script.headers.get("Content-Type")).toStartWith("text/javascript");
+    expect(await script.text()).toContain("navigator.clipboard.writeText");
+  });
+
+  test("renders a complete document with valid structured metadata", async () => {
+    const body = await (await site.request(origin)).text();
+    expect(body).toStartWith("<!doctype html>");
+    const metadata = body.match(
+      /<script type="application\/ld\+json">([\s\S]*?)<\/script>/,
+    );
+    expect(metadata).not.toBeNull();
+    expect(JSON.parse(metadata![1])).toMatchObject({
+      "@type": "WebSite",
+      name: "Mainroom",
+      url: origin,
+    });
+  });
+
   test.each([
     ["text/markdown", "text/markdown"],
     ["text/html", "text/html"],
