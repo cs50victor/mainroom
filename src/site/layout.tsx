@@ -11,7 +11,38 @@ type LayoutProps = {
   landing?: boolean;
 };
 
-function Header() {
+function Brand() {
+  return (
+    <>
+      <span class="brand-symbol" aria-hidden="true">
+        <i />
+        <i />
+        <i />
+      </span>
+      mainroom
+    </>
+  );
+}
+
+function Header({ landing }: { landing: boolean }) {
+  if (landing)
+    return (
+      <header class="site-header flex items-center justify-between">
+        <a class="wordmark" href="/" aria-label="Mainroom home">
+          <Brand />
+        </a>
+        <nav aria-label="Main navigation">
+          <a href="/guides">Guides</a>
+          <a href="/docs">API docs</a>
+          <a href="https://github.com/cs50victor/mainroom">
+            GitHub{" "}
+            <span class="arrow" aria-hidden="true">
+              ↗
+            </span>
+          </a>
+        </nav>
+      </header>
+    );
   return (
     <header class="flex items-center justify-between gap-6 px-5 py-[22px] sm:px-11 sm:py-7">
       <a
@@ -41,7 +72,21 @@ function Header() {
   );
 }
 
-function Footer() {
+function Footer({ landing }: { landing: boolean }) {
+  if (landing)
+    return (
+      <footer class="site-footer">
+        <a class="wordmark" href="/" aria-label="Mainroom home">
+          <Brand />
+        </a>
+        <a class="footer-link" href="/SKILL.md">
+          Read the setup skill{" "}
+          <span class="arrow" aria-hidden="true">
+            ↗
+          </span>
+        </a>
+      </footer>
+    );
   return (
     <footer class="flex items-center justify-between gap-6 px-5 py-[22px] text-[11px] text-[#808675] sm:px-11 sm:py-6 sm:text-xs [&_a:hover]:text-[#171a14] [&_a:hover]:underline">
       <span>
@@ -78,7 +123,11 @@ export function Layout({
       {raw("<!doctype html>")}
       <html
         lang="en"
-        class="scheme-light bg-canvas font-sans text-ink antialiased [font-synthesis:none]"
+        class={
+          landing
+            ? "landing scheme-light"
+            : "scheme-light bg-canvas font-sans text-ink antialiased [font-synthesis:none]"
+        }
       >
         <head>
           <meta charset="utf-8" />
@@ -92,7 +141,11 @@ export function Layout({
           <meta name="twitter:card" content="summary" />
           <link
             rel="icon"
-            href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2330332e'/%3E%3Ctext x='5' y='24' font-family='Georgia' font-size='28' font-weight='bold' fill='%23fafaf8'%3Em%3C/text%3E%3C/svg%3E"
+            href={
+              landing
+                ? "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath fill='%23242421' d='M3 9l7-3v23l-7 3zm10-6l7-3v28l-7 3zm10 3l7-3v23l-7 3z'/%3E%3C/svg%3E"
+                : "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2330332e'/%3E%3Ctext x='5' y='24' font-family='Georgia' font-size='28' font-weight='bold' fill='%23fafaf8'%3Em%3C/text%3E%3C/svg%3E"
+            }
           />
           <link rel="canonical" href={`${origin}${path}`} />
           <link
@@ -113,16 +166,26 @@ export function Layout({
           />
           {landing && <script src="/site.js" defer />}
         </head>
-        <body class="flex min-h-svh flex-col leading-normal [&_a]:underline-offset-4 [&_a:focus-visible]:outline-2 [&_a:focus-visible]:outline-offset-[5px] [&_a:focus-visible]:outline-[#50594a] [&_button:focus-visible]:outline-2 [&_button:focus-visible]:outline-offset-[5px] [&_button:focus-visible]:outline-[#50594a]">
+        <body
+          class={
+            landing
+              ? "site"
+              : "flex min-h-svh flex-col leading-normal [&_a]:underline-offset-4 [&_a:focus-visible]:outline-2 [&_a:focus-visible]:outline-offset-[5px] [&_a:focus-visible]:outline-[#50594a] [&_button:focus-visible]:outline-2 [&_button:focus-visible]:outline-offset-[5px] [&_button:focus-visible]:outline-[#50594a]"
+          }
+        >
           <a
-            class="absolute -top-[60px] left-6 z-10 bg-white p-3 focus:top-3"
+            class={
+              landing
+                ? "skip-link"
+                : "absolute -top-[60px] left-6 z-10 bg-white p-3 focus:top-3"
+            }
             href="#main"
           >
             Skip to content
           </a>
-          <Header />
+          <Header landing={landing} />
           {children}
-          <Footer />
+          <Footer landing={landing} />
         </body>
       </html>
     </>
