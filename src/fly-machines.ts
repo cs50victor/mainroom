@@ -1,6 +1,7 @@
 export type FlyMachine = {
   id?: unknown;
   state?: unknown;
+  config?: Record<string, unknown> & { init?: { exec?: string[] } };
 };
 
 export type FlyMachineConfig = {
@@ -26,6 +27,50 @@ export type FlyMachineEnv = {
 export type FlyMachineRecord = {
   flyMachineId?: string;
 };
+
+export function tokenproxyStartup(configUrl: string): string[] {
+  return [
+    "/bin/bash",
+    "-ec",
+    `umask 077
+config_file=$(mktemp "\${TMPDIR:-/tmp}/tokenproxy.XXXXXX")
+trap 'rm -f "$config_file"' EXIT
+curl --fail --silent --show-error --connect-timeout 10 --max-time 60 \\
+  --header "Authorization: Bearer $TOKENPROXY_CLIENT_KEY" "$1" --output "$config_file"
+exec tokenproxy --config "$config_file" -c "server.bind='0.0.0.0:8787'" -c server.allow_non_loopback=true`,
+    "tokenproxy-startup",
+    configUrl,
+  ];
+}
+
+export async function startFlyMachine(
+  fly: FlyMachineConfig,
+  machineId: string,
+  exec: string[],
+): Promise<FlyMachine> {
+  const path = `/machines/${encodeURIComponent(machineId)}`;
+  let machine = await flyMachineApi<FlyMachine>(fly, path);
+  if (!machine.config) throw new Error("Fly machine configuration is missing");
+
+  if (JSON.stringify(machine.config.init?.exec) !== JSON.stringify(exec)) {
+    machine = await flyMachineApi<FlyMachine>(fly, path, {
+      method: "POST",
+      body: JSON.stringify({
+        config: {
+          ...machine.config,
+          init: { ...machine.config.init, exec },
+        },
+        skip_launch: true,
+      }),
+    });
+  }
+
+  if (machine.state !== "started" && machine.state !== "starting") {
+    await flyMachineApi(fly, `${path}/start`, { method: "POST" });
+    machine = await flyMachineApi<FlyMachine>(fly, path);
+  }
+  return machine;
+}
 
 export function flyMachineName(
   subject: string,

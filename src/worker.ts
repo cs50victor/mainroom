@@ -21,6 +21,8 @@ import {
   flyMachineConfig,
   flyMachineFetch,
   flyMachineName,
+  startFlyMachine,
+  tokenproxyStartup,
   type FlyMachine,
 } from "./fly-machines";
 import { apiKeySchema } from "./schemas/api-keys";
@@ -87,15 +89,9 @@ const s3ListParser = new XMLParser();
  *   https://nginx.org/en/docs/control.html
  */
 const tokenproxyRuntimeVersion = "v0.1.16";
-const tokenproxyEntrypoint = [
-  "tokenproxy",
-  "--config",
-  "__MAINROOM_SIGNED_CONFIG_URL__",
-  "-c",
-  "server.bind='0.0.0.0:8787'",
-  "-c",
-  "server.allow_non_loopback=true",
-];
+const tokenproxyEntrypoint = tokenproxyStartup(
+  `https://${rootHost}/v0/tokenproxy/config/me`,
+);
 
 type Env = {
   AUTH_MODE?: string;
@@ -507,24 +503,18 @@ export class UserMachineContainer extends DurableObject<Env> {
   ): Promise<UserMachineRecord & { flyMachineId: string; state: string }> {
     const fly = requiredFlyMachineConfig(this.env);
     if (record.flyMachineId) {
-      await flyMachineApi(fly, `/machines/${record.flyMachineId}/start`, {
-        method: "POST",
-      }).catch((error) => {
-        const message = workerErrorMessage(error);
-        if (!message.includes("machine still active")) throw error;
-      });
-      const state = await this.flyMachineState(record.flyMachineId);
+      const machine = await startFlyMachine(
+        fly,
+        record.flyMachineId,
+        tokenproxyEntrypoint,
+      );
+      const state = stringFromFlyMachineState(machine.state);
       return { ...record, flyMachineId: record.flyMachineId, state };
     }
 
     const { secret } = await getApiKeySecret(
       workerAppConfig(this.env),
       record.apiKeyId,
-    );
-    const configUrl = await signedMainroomUrl(
-      this.env,
-      `/v0/tokenproxy/config/${encodeURIComponent(record.subject)}.toml`,
-      signedConfigTtlSeconds,
     );
     const existing = await flyMachineApi<FlyMachine[]>(
       fly,
@@ -540,10 +530,7 @@ export class UserMachineContainer extends DurableObject<Env> {
         flyMachineId: existingMachine.id,
       };
       await this.ctx.storage.put(this.storageKey, next);
-      return {
-        ...next,
-        state: stringFromFlyMachineState(existingMachine.state),
-      };
+      return this.ensureFlyMachine(next);
     }
 
     const machine = await flyMachineApi<FlyMachine>(fly, "/machines", {
@@ -564,11 +551,7 @@ export class UserMachineContainer extends DurableObject<Env> {
             USER_SUBJECT: record.subject,
           },
           init: {
-            exec: [
-              ...tokenproxyEntrypoint.slice(0, 2),
-              configUrl,
-              ...tokenproxyEntrypoint.slice(3),
-            ],
+            exec: tokenproxyEntrypoint,
           },
           metadata: {
             mainroom_subject: record.subject,
@@ -1062,6 +1045,21 @@ async function reloadOwnTokenproxyConfig(c: WorkerContext): Promise<Response> {
     });
     return c.json({ error: workerErrorMessage(error) }, 500);
   }
+}
+
+async function ownTokenproxyConfig(c: WorkerContext): Promise<Response> {
+  const apiKey = await verifiedApiKey(workerAppConfig(c.env), c.req.raw);
+  if (!apiKey) return c.json({ error: "Unauthorized" }, 401);
+
+  const config = await renderTokenproxyConfig(c.env, apiKey.subject);
+  if ("error" in config) return c.json({ error: config.error }, config.status);
+
+  return new Response(config.toml, {
+    headers: {
+      "content-type": "application/toml; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
 }
 
 async function signedTokenproxyConfig(c: WorkerContext): Promise<Response> {
@@ -1815,6 +1813,8 @@ workerApp.all("/v0/shares/providers/*", (c) =>
 );
 workerApp.post("/v0/tokenproxy/config/reload", reloadOwnTokenproxyConfig);
 workerApp.all("/v0/tokenproxy/config/reload", methodNotAllowed);
+workerApp.get("/v0/tokenproxy/config/me", ownTokenproxyConfig);
+workerApp.all("/v0/tokenproxy/config/me", methodNotAllowed);
 workerApp.get("/v0/tokenproxy/config/:subject", signedTokenproxyConfig);
 workerApp.all("/v0/tokenproxy/config/:subject", methodNotAllowed);
 workerApp.get("/v0/tokenproxy/auth-json/:subject/:uploadName", signedAuthJson);

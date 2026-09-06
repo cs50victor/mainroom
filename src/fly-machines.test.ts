@@ -6,6 +6,7 @@ import {
   flyMachineFetch,
   flyMachineName,
   positiveIntegerEnv,
+  startFlyMachine,
   type FlyMachineConfig,
 } from "./fly-machines";
 
@@ -28,6 +29,67 @@ function flyConfig(
     ...overrides,
   };
 }
+
+describe("startFlyMachine", () => {
+  test("replaces expired startup commands without losing machine configuration", async () => {
+    const exec = ["/bin/bash", "-ec", "fresh-config"];
+    const config = {
+      image: "registry.fly.io/app:v1",
+      env: { TOKENPROXY_CLIENT_KEY: "existing-key" },
+      services: [{ internal_port: 8787 }],
+      init: { exec: ["tokenproxy", "--config", "https://expired.example"] },
+    };
+    const calls: { url: string; init?: RequestInit }[] = [];
+    globalThis.fetch = (async (url, init) => {
+      calls.push({ url: String(url), init });
+      if (calls.length === 1)
+        return Response.json({ state: "stopped", config });
+      if (calls.length === 2) {
+        expect(JSON.parse(String(init?.body))).toEqual({
+          config: { ...config, init: { exec } },
+          skip_launch: true,
+        });
+        return Response.json({ state: "stopped" });
+      }
+      if (calls.length === 3) return new Response(null, { status: 204 });
+      return Response.json({ state: "started" });
+    }) as typeof fetch;
+
+    expect(await startFlyMachine(flyConfig(), "machine-id", exec)).toEqual({
+      state: "started",
+    });
+    expect(calls.map((call) => call.init?.method ?? "GET")).toEqual([
+      "GET",
+      "POST",
+      "POST",
+      "GET",
+    ]);
+    expect(calls[2].url).toEndWith("/machines/machine-id/start");
+  });
+
+  test("leaves a running machine with current startup configuration untouched", async () => {
+    const exec = ["current-startup"];
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      return Response.json({ state: "started", config: { init: { exec } } });
+    }) as typeof fetch;
+    await startFlyMachine(flyConfig(), "machine-id", exec);
+    expect(calls).toBe(1);
+  });
+
+  test("does not update or start a machine when its configuration is missing", async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      return Response.json({ state: "stopped" });
+    }) as typeof fetch;
+    await expect(
+      startFlyMachine(flyConfig(), "machine-id", []),
+    ).rejects.toThrow("Fly machine configuration is missing");
+    expect(calls).toBe(1);
+  });
+});
 
 describe("flyMachineConfig", () => {
   test("is disabled until every required Fly setting is present", () => {
