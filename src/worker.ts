@@ -309,7 +309,8 @@ export class ShareGrantStore extends DurableObject<Env> {
       const key = providerConsumerKey(providerSubject, consumerSubject);
       const grant = await this.ctx.storage.get<ShareGrantRecord>(key);
 
-      const usage = await this.grantUsage(grant);
+      const day = new Date().toISOString().slice(0, 10);
+      const usage = await this.grantUsage(grant, day);
       const decision = authorizeShareGrant(grant, scope, usage);
 
       if (!decision.ok) {
@@ -332,18 +333,17 @@ export class ShareGrantStore extends DurableObject<Env> {
       }
 
       if (!grant) return json({ error: "No active grant" }, 403);
-      const requestKey = usageKey(grant.grantId);
+      const quotaId = shareQuotaId(grant);
+      const requestKey = usageKey(quotaId, day);
 
       if (decision.lease) {
-        await this.ctx.storage.put(
-          inFlightKey(grant.grantId),
-          decision.usage.inFlight,
-        );
+        await this.ctx.storage.put(inFlightKey(quotaId), usage.ownInFlight + 1);
       }
       await this.ctx.storage.put(`${requestKey}:tokens`, decision.usage.tokens);
       await this.ctx.storage.put(requestKey, decision.usage.requests);
       console.log("share_grant_allow", auditGrant(grant));
-      return json({ grantId: grant.grantId });
+      // Keep the legacy RPC field name; its value is now an opaque quota handle.
+      return json({ grantId: decision.lease ? quotaId : undefined });
     }
 
     if (request.method === "POST" && url.pathname === "/release") {
@@ -368,24 +368,37 @@ export class ShareGrantStore extends DurableObject<Env> {
     return [...entries.values()].filter(predicate);
   }
 
-  private async grantUsage(
-    grant: ShareGrantRecord | undefined,
-  ): Promise<{ requests: number; tokens: number; inFlight: number }> {
-    if (!grant) return { requests: 0, tokens: 0, inFlight: 0 };
+  private async grantUsage(grant: ShareGrantRecord | undefined, day: string) {
+    if (!grant) return { requests: 0, tokens: 0, inFlight: 0, ownInFlight: 0 };
 
-    const requestKey = usageKey(grant.grantId);
+    const quotaId = shareQuotaId(grant);
+    const requestKey = usageKey(quotaId, day);
+    const legacyKey = usageKey(grant.grantId, day);
+    const ownInFlight =
+      (await this.ctx.storage.get<number>(inFlightKey(quotaId))) ?? 0;
+    // Preserve today's legacy reservations. Old streams release their old handles;
+    // count those separately until they drain, without copying a stale lease count.
+    const legacyInFlight =
+      (await this.ctx.storage.get<number>(inFlightKey(grant.grantId))) ?? 0;
     return {
-      requests: (await this.ctx.storage.get<number>(requestKey)) ?? 0,
-      tokens: (await this.ctx.storage.get<number>(`${requestKey}:tokens`)) ?? 0,
-      inFlight:
-        (await this.ctx.storage.get<number>(inFlightKey(grant.grantId))) ?? 0,
+      requests:
+        (await this.ctx.storage.get<number>(requestKey)) ??
+        (await this.ctx.storage.get<number>(legacyKey)) ??
+        0,
+      tokens:
+        (await this.ctx.storage.get<number>(`${requestKey}:tokens`)) ??
+        (await this.ctx.storage.get<number>(`${legacyKey}:tokens`)) ??
+        0,
+      inFlight: ownInFlight + legacyInFlight,
+      ownInFlight,
     };
   }
 
   private async publicUsage(grant: ShareGrantRecord) {
-    const usage = await this.grantUsage(grant);
+    const day = new Date().toISOString().slice(0, 10);
+    const usage = await this.grantUsage(grant, day);
     return {
-      day: new Date().toISOString().slice(0, 10),
+      day,
       requests: usage.requests,
       reservedOutputTokens: usage.tokens,
       inFlight: usage.inFlight,
@@ -708,6 +721,7 @@ function tokenproxyRequest(
 async function userMachineV1Request(
   request: Request,
   env: Env,
+  ctx: ExecutionContext,
 ): Promise<Response | undefined> {
   const url = new URL(request.url);
   if (!url.pathname.startsWith("/v1/")) return undefined;
@@ -732,6 +746,7 @@ async function userMachineV1Request(
       env,
       auth.grantId,
       await machine.fetch(request),
+      ctx,
     );
   } catch (error) {
     if (auth.grantId) await releaseShareGrant(env, auth.grantId);
@@ -1391,20 +1406,29 @@ function releaseGrantWhenDone(
   env: Env,
   grantId: string | undefined,
   response: Response,
+  ctx: ExecutionContext,
 ): Response {
   if (!grantId) return response;
 
   if (!response.body) {
-    void releaseShareGrant(env, grantId);
+    ctx.waitUntil(releaseShareGrant(env, grantId));
     return response;
   }
 
   const stream = new TransformStream();
-  response.body.pipeTo(stream.writable).finally(() => {
-    void releaseShareGrant(env, grantId);
-  });
+  ctx.waitUntil(
+    response.body
+      .pipeTo(stream.writable)
+      // pipeTo already propagates errors/cancellation to the connected stream.
+      .catch(() => {})
+      .finally(() => releaseShareGrant(env, grantId)),
+  );
 
   return new Response(stream.readable, response);
+}
+
+function shareQuotaId(grant: ShareGrantRecord): string {
+  return JSON.stringify([grant.providerSubject, grant.consumerSubject]);
 }
 
 function shareIdentityFrom(value: unknown): {
@@ -2036,7 +2060,7 @@ workerApp.all(
   methodNotAllowed,
 );
 workerApp.all("/v1/*", async (c) => {
-  const response = await userMachineV1Request(c.req.raw, c.env);
+  const response = await userMachineV1Request(c.req.raw, c.env, c.executionCtx);
   return response ?? mainroomContainerRequest(c.req.raw, c.env);
 });
 workerApp.get("/", usernameStatus);

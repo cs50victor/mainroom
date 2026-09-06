@@ -14,7 +14,12 @@ mock.module("@cloudflare/containers", () => ({
 }));
 const { default: worker, ShareGrantStore } = await import("../../src/worker");
 
-export async function sharingFixture() {
+export async function sharingFixture(
+  options: {
+    store?: { fetch(request: Request): Promise<Response> };
+    onStorageRead?: (key: string) => void;
+  } = {},
+) {
   const originalNodeEnv = process.env.NODE_ENV;
   process.env.NODE_ENV = "test";
   const directory = await mkdtemp(join(tmpdir(), "mainroom-sharing-"));
@@ -84,7 +89,11 @@ export async function sharingFixture() {
   Object.defineProperty(store, "ctx", {
     value: {
       storage: {
-        get: async (key: string) => storage.get(key),
+        get: async (key: string) => {
+          const value = storage.get(key);
+          options.onStorageRead?.(key);
+          return value;
+        },
         put: async (key: string, value: unknown) => {
           storage.set(key, value);
         },
@@ -95,6 +104,14 @@ export async function sharingFixture() {
   });
   const forwarded: string[] = [];
   const reconciled: string[] = [];
+  let upstream = async (_request: Request, _name: string) =>
+    Response.json({ status: "completed", output: [{ text: "OK" }] });
+  const pending: Promise<unknown>[] = [];
+  const responseTasks = new WeakMap<Response, Promise<unknown>[]>();
+  const responses = new Set<Response>();
+  const drain = async () => {
+    while (pending.length) await Promise.all(pending.splice(0));
+  };
   let reconcileFails = false;
   const env = {
     AUTH_MODE: "clerk",
@@ -105,7 +122,10 @@ export async function sharingFixture() {
     AWS_ACCESS_KEY_ID: "test",
     AWS_SECRET_ACCESS_KEY: "test",
     MACHINE_CONTROL_TOKEN: "test-signing-key",
-    SHARE_GRANT_STORE: { idFromName: (name: string) => name, get: () => store },
+    SHARE_GRANT_STORE: {
+      idFromName: (name: string) => name,
+      get: () => options.store ?? store,
+    },
     USER_MACHINE_CONTAINER: {
       idFromName: (name: string) => name,
       get: (name: string) => ({
@@ -114,12 +134,9 @@ export async function sharingFixture() {
           if (reconcileFails) throw new Error("fixture node unavailable");
           return { created: false, restarted: true };
         },
-        fetch: async () => {
+        fetch: async (request: Request) => {
           forwarded.push(name);
-          return Response.json({
-            status: "completed",
-            output: [{ text: "OK" }],
-          });
+          return upstream(request, name);
         },
         info: async () => ({ subject: name }),
       }),
@@ -229,14 +246,15 @@ export async function sharingFixture() {
     }),
   );
   server.listen({ onUnhandledRequest: "error" });
-  const call = (
+  const call = async (
     username: string,
     path: string,
     method = "GET",
     body?: object,
     origin = "https://mainroom.sh",
-  ) =>
-    worker.fetch(
+  ) => {
+    const tasks: Promise<unknown>[] = [];
+    const response = await worker.fetch(
       new Request(new URL(path, origin), {
         method,
         headers: {
@@ -246,8 +264,17 @@ export async function sharingFixture() {
         body: body === undefined ? undefined : JSON.stringify(body),
       }),
       env as never,
-      {} as never,
+      {
+        waitUntil: (task: Promise<unknown>) => {
+          pending.push(task);
+          tasks.push(task);
+        },
+      } as never,
     );
+    responseTasks.set(response, tasks);
+    responses.add(response);
+    return response;
+  };
   return {
     call,
     users,
@@ -256,6 +283,12 @@ export async function sharingFixture() {
     forwarded,
     reconciled,
     store,
+    drain,
+    settled: (response: Response) =>
+      Promise.all(responseTasks.get(response) ?? []),
+    setUpstream: (handler: typeof upstream) => {
+      upstream = handler;
+    },
     failReconcile: () => {
       reconcileFails = true;
     },
@@ -313,10 +346,21 @@ export async function sharingFixture() {
       }
     },
     close: async () => {
-      server.close();
-      if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
-      else process.env.NODE_ENV = originalNodeEnv;
-      await rm(directory, { recursive: true, force: true });
+      try {
+        await Promise.all(
+          [...responses].map((response) =>
+            !response.bodyUsed && !response.body?.locked
+              ? response.body?.cancel()
+              : undefined,
+          ),
+        );
+        await drain();
+      } finally {
+        server.close();
+        if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = originalNodeEnv;
+        await rm(directory, { recursive: true, force: true });
+      }
     },
   };
 }

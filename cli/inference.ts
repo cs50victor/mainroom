@@ -2,9 +2,18 @@ import { EventSourceParserStream } from "eventsource-parser/stream";
 import { z } from "zod";
 
 const completedResponseSchema = z.object({ status: z.literal("completed") });
+const completedEventResponseSchema = z.union([
+  completedResponseSchema,
+  z.object({
+    id: z.string().min(1),
+    status: z.literal("completed").optional(),
+  }),
+]);
 const responseEventSchema = z.object({
   type: z.string(),
-  response: z.object({ status: z.string() }).optional(),
+  response: z
+    .object({ id: z.string().optional(), status: z.string().optional() })
+    .optional(),
 });
 const modelsSchema = z.object({ data: z.array(z.object({ id: z.string() })) });
 
@@ -72,7 +81,8 @@ export async function hasCompletedResponse(
     const event = responseEventSchema.safeParse(value);
     if (!event.success) return false;
     if (event.data.type === "response.completed")
-      return completedResponseSchema.safeParse(event.data.response).success;
+      return completedEventResponseSchema.safeParse(event.data.response)
+        .success;
     if (
       ["response.failed", "response.incomplete", "error"].includes(
         event.data.type,

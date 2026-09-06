@@ -242,17 +242,18 @@ export function upsertShareGrant(
   return {
     ...input,
     ...identity,
-    grantId:
-      existing?.grantId ??
-      grantId(identity.providerSubject, identity.consumerSubject),
+    grantId: existing?.grantId ?? `share_${crypto.randomUUID()}`,
     createdAt: existing?.createdAt ?? now,
     status: "active",
     updatedAt: now,
   };
 }
 
-export function usageKey(grantId: string): string {
-  return `usage:${grantId}:${new Date().toISOString().slice(0, 10)}`;
+export function usageKey(
+  grantId: string,
+  day = new Date().toISOString().slice(0, 10),
+): string {
+  return `usage:${grantId}:${day}`;
 }
 
 export function inFlightKey(grantId: string): string {
@@ -324,13 +325,4 @@ function positiveInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value > 0
     ? value
     : undefined;
-}
-
-function grantId(providerSubject: string, consumerSubject: string): string {
-  const input = `${providerSubject}:${consumerSubject}`;
-  let hash = 0;
-  for (let index = 0; index < input.length; index += 1) {
-    hash = (hash * 31 + input.charCodeAt(index)) >>> 0;
-  }
-  return `share_${hash.toString(36)}`;
 }
