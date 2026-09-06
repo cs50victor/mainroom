@@ -10,6 +10,11 @@
   },
   "rules": [
     {
+      "type": "Data",
+      "globs": ["**/*.woff2"],
+      "fallthrough": true,
+    },
+    {
       "type": "Text",
       "globs": ["**/*.md", "**/*.css", "**/copy-prompt.js"],
       "fallthrough": true,

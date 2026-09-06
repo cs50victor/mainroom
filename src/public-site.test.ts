@@ -41,6 +41,21 @@ describe("public website", () => {
     expect(script.headers.get("Content-Type")).toStartWith("text/javascript");
   });
 
+  test.each([400, 500, 700])(
+    "serves DM Sans %s as a WOFF2 binary",
+    async (weight) => {
+      const response = await site.request(
+        `${origin}/fonts/dm-sans-${weight}.woff2`,
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("Content-Type")).toBe("font/woff2");
+      expect(response.headers.get("Cache-Control")).toContain("max-age=86400");
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      expect(new TextDecoder().decode(bytes.subarray(0, 4))).toBe("wOF2");
+      expect(bytes.byteLength).toBeGreaterThan(10000);
+    },
+  );
+
   test.each([
     ["text/markdown", "text/markdown"],
     ["text/html", "text/html"],

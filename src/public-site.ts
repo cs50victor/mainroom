@@ -8,6 +8,10 @@ import { origin, overview, pages, skill } from "./site/content";
 import styles from "./generated/site.css" with { type: "text" };
 import copyScript from "./site/copy-prompt.js" with { type: "text" };
 
+import fontRegular from "./site/fonts/dm-sans-400.woff2";
+import fontMedium from "./site/fonts/dm-sans-500.woff2";
+import fontBold from "./site/fonts/dm-sans-700.woff2";
+
 function isPublicHost(hostname: string): boolean {
   return ["mainroom.sh", "localhost", "127.0.0.1", "[::1]"].includes(hostname);
 }
@@ -147,6 +151,24 @@ export function createPublicSite(): Hono {
       }),
     );
   });
+  const fonts = [
+    ["/fonts/dm-sans-400.woff2", fontRegular],
+    ["/fonts/dm-sans-500.woff2", fontMedium],
+    ["/fonts/dm-sans-700.woff2", fontBold],
+  ] as const;
+  for (const [path, font] of fonts) {
+    site.get(path, async (c) => {
+      // Bun imports asset paths; Workers Data modules supply the bytes.
+      const bytes =
+        typeof font === "string"
+          ? await (await fetch(new URL(font, "file:///"))).arrayBuffer()
+          : font;
+      c.header("Content-Type", "font/woff2");
+      c.header("Cache-Control", "public, max-age=86400");
+      c.header("X-Content-Type-Options", "nosniff");
+      return c.body(bytes);
+    });
+  }
   site.get("/site.css", (c) => {
     c.header("Cache-Control", "public, max-age=300");
     c.header("Content-Type", "text/css; charset=utf-8");

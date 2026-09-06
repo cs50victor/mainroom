@@ -1,41 +1,128 @@
 import { Layout } from "./layout";
 import { SetupPrompt } from "./setup-prompt";
 
+function Sharing() {
+  return (
+    <aside
+      class="sharing-demo"
+      data-shared="true"
+      aria-label="Interactive sharing example"
+    >
+      <div class="routing-example" aria-hidden="true">
+        <div class="orbit orbit-one" />
+        <div class="orbit orbit-two" />
+        <div class="member-card member-alex">
+          <div class="card-top">
+            <span>mainroom</span>
+          </div>
+          <div class="card-pattern pattern-alex">
+            <i />
+            <i />
+            <i />
+            <i />
+            <i />
+          </div>
+          <div class="card-bottom">
+            <strong>Alex</strong>
+          </div>
+        </div>
+        <div class="member-card member-sam">
+          <div class="card-top">
+            <span>mainroom</span>
+          </div>
+          <div class="card-pattern pattern-sam">
+            <i />
+            <i />
+            <i />
+            <i />
+            <i />
+          </div>
+          <div class="card-bottom">
+            <strong>Sam</strong>
+          </div>
+        </div>
+        <div class="member-card member-you">
+          <div class="card-top">
+            <span>mainroom</span>
+          </div>
+          <div class="room-glyph">
+            <i />
+            <i />
+            <i />
+          </div>
+          <div class="card-bottom">
+            <strong>You.</strong>
+            <span>Your accounts</span>
+          </div>
+        </div>
+        <div class="endpoint">
+          <span class="endpoint-dot" />
+          <code>you.mainroom.sh/v1</code>
+          <span>↗</span>
+        </div>
+      </div>
+      <div class="demo-bottom" hidden>
+        <div
+          class="mode-switch"
+          role="group"
+          aria-label="Compare account access"
+        >
+          <span class="mode-indicator" data-shared="true" />
+          <button type="button" aria-pressed="false" data-sharing-mode="solo">
+            Just you
+          </button>
+          <button type="button" aria-pressed="true" data-sharing-mode="shared">
+            With friends
+          </button>
+        </div>
+      </div>
+      <p class="visually-hidden" role="status">
+        Your accounts + the nodes your friends share with you.
+      </p>
+    </aside>
+  );
+}
+
 export function HomePage() {
   return (
     <Layout
-      title="Mainroom | Your AI subscriptions. Better together."
+      title="Mainroom | Your AI. Our space."
       path="/"
       markdownPath="/index.md"
       landing
     >
-      <main
-        id="main"
-        class="grid flex-1 place-items-center bg-[radial-gradient(#daddd4_0.65px,transparent_0.65px)] bg-size-[24px_24px] px-5 pt-[55px] pb-[65px] sm:px-6 sm:pt-16 sm:pb-[100px]"
-      >
-        <div class="w-full max-w-[860px] text-center">
-          <p class="mb-[22px] font-mono text-[11px] tracking-[2.5px] text-[#757a6d]">
-            AI WITH FRIENDS
-          </p>
-          <h1 class="text-[clamp(40px,5.5vw,68px)] leading-[1.08] font-medium tracking-[-1.8px] sm:tracking-[-3px]">
-            Your AI subscriptions.
-            <br />
-            Better together.
-          </h1>
-          <p class="mx-auto mt-[22px] mb-[42px] max-w-[260px] text-sm leading-[1.6] text-muted sm:mt-6 sm:mb-[54px] sm:max-w-none sm:text-base">
-            Bring your subscriptions together with friends.
-            <br />
-            Share the cost, and access your own accounts and theirs through one
-            endpoint.
-          </p>
-          <SetupPrompt />
-          <a
-            class="mt-[34px] inline-block text-[13px] text-accent hover:underline"
-            href="/guides/getting-started"
-          >
-            Or set up manually <span aria-hidden="true">↗</span>
-          </a>
-        </div>
+      <main id="main">
+        <section class="hero" aria-labelledby="hero-title">
+          <div class="hero-copy">
+            <h1 id="hero-title">
+              Your AI.
+              <br />
+              <span>Our space.</span>
+            </h1>
+            <p class="hero-description">
+              Bring your AI subscriptions together with friends. One personal
+              endpoint for all of them.
+            </p>
+            <SetupPrompt />
+          </div>
+          <Sharing />
+        </section>
+        <section class="principles" aria-label="How Mainroom works">
+          <div class="details-grid">
+            <article>
+              <h3>Bring what you have.</h3>
+              <p>Connect the subscriptions you already pay for.</p>
+            </article>
+            <article>
+              <h3>Make it your circle.</h3>
+              <p>Choose who gets access, which models, and how much.</p>
+            </article>
+            <article>
+              <h3>Keep it simple.</h3>
+              <p>Use one endpoint with the tools you already use.</p>
+            </article>
+          </div>
+        </section>
       </main>
     </Layout>
   );
