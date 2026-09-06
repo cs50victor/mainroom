@@ -6,12 +6,21 @@ test("requires a completed inference, not just HTTP 200 or a model list", async 
     'data: {"type":"response.failed","response":{"status":"failed"}}\n\n',
     'data: {"type":"response.created"}\n\ndata: [DONE]\n\n',
     '{"data":[{"id":"model"}]}',
+    'data: {"type":"response.completed","response":{}}\n\n',
+    'data: {"type":"response.completed","response":{"id":"resp_1","status":"failed"}}\n\n',
   ])
     expect(await hasCompletedResponse(new Response(body))).toBe(false);
   expect(
     await hasCompletedResponse(
       new Response(
         'data: {"type":"response.completed","response":{"status":"completed"}}\r\n\r\n',
+      ),
+    ),
+  ).toBe(true);
+  expect(
+    await hasCompletedResponse(
+      new Response(
+        'event: response.created\ndata: {"type":"response.created","response":{"id":"resp_1"}}\n\nevent: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}\n\n',
       ),
     ),
   ).toBe(true);

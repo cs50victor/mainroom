@@ -49,11 +49,15 @@ Researched with `gh search code` and `gh api` against `openai/codex`, pinned to
   Streams and explicit close/error signals for the same control over delivery.
 - [stream_no_completed.rs](https://github.com/openai/codex/blob/ac192cd7937b0d73edc6dffe009940ae53782dd4/codex-rs/core/tests/suite/stream_no_completed.rs#L1)
   exercises streams that end without completion, including recovery.
+- [Responses SSE parser](https://github.com/openai/codex/blob/ac192cd7937b0d73edc6dffe009940ae53782dd4/codex-rs/codex-api/src/sse/responses.rs#L483)
+  recognizes completion by event type and response ID without requiring status.
 
 These are synthetic fixtures modeled on official tests, not captured production
 responses or an exhaustive OpenAI protocol conformance suite. In particular,
-Codex's minimal `response.created` fixture omits status; Mainroom must keep
-reading it and require a completed status only on the terminal completion event.
+Codex's minimal created and completed fixtures omit status. Mainroom keeps
+reading nonterminal events and accepts a completed event with a response ID,
+while rejecting an explicitly unsuccessful status. Plain JSON responses still
+require `status: "completed"`.
 
 ## Quota compatibility
 

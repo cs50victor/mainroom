@@ -30,7 +30,6 @@ export function responseEvents(
       type: `response.${terminal}`,
       response: {
         id,
-        status: terminal,
         usage: { input_tokens: 3, output_tokens: 2, total_tokens: 5 },
         ...(terminal === "failed"
           ? {
