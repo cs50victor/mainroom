@@ -5,7 +5,7 @@ Each person gets one endpoint at https://<username>.mainroom.sh/v1, backed
 by their own accounts and nodes shared with them. Providers control access
 and usage limits.
 
-[Website](https://mainroom.sh) · [Guides](https://mainroom.sh/guides) · [API reference](https://mainroom.sh/docs)
+[Website](https://mainroom.sh) · [Guides](https://mainroom.sh/guides) · [CLI commands](src/content/cli.md) · [API reference](https://mainroom.sh/docs)
 
 ## Get started
 
@@ -27,8 +27,8 @@ or connect an inference client, follow the [setup guide](https://mainroom.sh/gui
     mainroom codex disable <filename.json>
 
 Reauth requires the official Codex CLI and preserves your usual local login.
-Disable keeps the credential but stops the remote machine, interrupting active
-requests. The remote machine runs tokenproxy; no local tokenproxy install is needed.
+Disable keeps the credential and interrupts requests while recovering with
+remaining accounts. The remote machine runs tokenproxy; no local install is needed.
 
 ## Architecture
 

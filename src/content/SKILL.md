@@ -22,7 +22,8 @@ Determine whether the user wants to contribute accounts, use friends' capacity, 
 1. Run `mainroom auth status`. For new users run `mainroom auth signup`; for existing users without a valid local credential run `mainroom auth login`. Let the user complete browser sign-in and any username prompts.
 2. Run `mainroom ping` to verify the saved credential and API connection.
 3. If contributing, run `mainroom codex sync` so the user can select which local Codex authentication files to upload. Use `--yes` only if the user has authorized uploading every eligible account. The files contain account credentials; do not print them, copy them into the conversation, or send them to friends.
-4. Check that sync and configuration reload both succeed. If the user intends to contribute but no eligible files exist, have them refresh the intended Codex sign-in before retrying. Users who only consume shared capacity can skip sync. Report unresolved authentication or reload failures before claiming setup is complete.
+4. Run `mainroom codex status` to check stored accounts. Use `mainroom codex reauth --account <filename>` for rejected credentials; it requires the official Codex CLI, preserves the usual local login, and checks the selected identity before uploading. Disable an unusable account with `mainroom codex disable <filename>` if authorized. Other unhealthy accounts can still block recovery; verify its inference result before claiming success.
+5. Users who only consume shared capacity can skip sync. Codex status can exit unsuccessfully with no enabled Codex accounts even when shared capacity works. After disabling the last account, run `mainroom friends connect` for incoming shares and verify inference. No local tokenproxy CLI is needed.
 
 ## Connect friends' nodes
 
@@ -42,6 +43,7 @@ Determine whether the user wants to contribute accounts, use friends' capacity, 
 
 ## Further reference
 
+- [CLI commands and options](https://mainroom.sh/guides/cli.md)
 - [Authentication](https://mainroom.sh/guides/authentication.md)
 - [API and sharing](https://mainroom.sh/guides/api.md)
 - [OpenAPI](https://mainroom.sh/openapi.json)

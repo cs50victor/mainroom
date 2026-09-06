@@ -21,14 +21,18 @@ Set `MAINROOM_MODEL` to a returned model identifier. This example uses `jq` to e
 
 ```sh
 jq -n --arg model "$MAINROOM_MODEL" \
-  '{model: $model, input: "Reply with hello."}' |
+  '{model: $model, input: "Reply with hello.", max_output_tokens: 128, service_tier: "auto"}' |
   curl --fail-with-body "https://${MAINROOM_USERNAME}.mainroom.sh/v1/responses" \
     -H "Authorization: Bearer ${MAINROOM_API_KEY}" \
     -H 'Content-Type: application/json' \
     --data-binary @-
 ```
 
-Inference is forwarded to tokenproxy. Configure your client's base URL and authentication according to that client's supported settings; do not assume every client uses the same configuration keys.
+Choose an output maximum and service tier permitted by your grant. The example
+reserves up to 128 output tokens against a shared daily token cap; it does not
+measure actual consumption. Inference is forwarded to tokenproxy. Configure
+your client's base URL and authentication according to that client's supported
+settings; do not assume every client uses the same configuration keys.
 
 ## Using your group's capacity
 
@@ -39,6 +43,8 @@ You can also call a provider's endpoint directly with your own Mainroom API key,
 ## Troubleshooting
 
 - A failed `mainroom ping` indicates an API connection or credential problem.
-- If no eligible Codex files are found, refresh the intended local Codex sign-in and run `mainroom codex sync` again.
+- Run `mainroom codex status` to identify a stored account that needs `mainroom codex reauth --account <filename>` or `mainroom codex disable <filename>`.
+- Codex status checks contributed Codex accounts, not overall endpoint health; a peer-only endpoint can work with no enabled Codex account.
 - If sync reports an upload succeeded but reload failed, setup is incomplete; retain the error and resolve it before claiming the endpoint is ready.
 - A denied shared request can reflect an inactive grant, unsupported scope, or exceeded limit.
+- Run `mainroom friends` to check each share's status, limits, and reserved usage; use `mainroom friends connect` to retry a failed node update, then verify inference again.

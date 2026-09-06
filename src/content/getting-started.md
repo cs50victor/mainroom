@@ -40,7 +40,7 @@ For an existing account:
 mainroom auth login
 ```
 
-Finish the browser sign-in and username prompts. Then verify the saved credential and API connection:
+Finish browser sign-in; Clerk collects your username during signup. Then verify the saved credential and API connection:
 
 ```sh
 mainroom auth status
@@ -59,6 +59,11 @@ The CLI finds eligible local Codex authentication files and asks which ones to u
 
 Use `mainroom codex sync --yes` only when you intend to upload every eligible account without the selection prompt.
 
+For a rejected or expired stored account, run `mainroom codex status` and
+`mainroom codex reauth --account <filename.json>`. Reauth requires the official
+Codex CLI; the remote machine runs tokenproxy, so no local tokenproxy install
+is needed. See [account recovery](https://mainroom.sh/guides/authentication).
+
 ## Connect your group's nodes
 
 Exchange Mainroom usernames with your group. Run `mainroom friends invite <username>` to choose models and a daily request limit, then `mainroom friends` to see your friends, sharing status, and recorded usage in both directions. Follow the [sharing walkthrough](https://mainroom.sh/guides/api) for all commands and API options.
@@ -76,3 +81,5 @@ Grant changes reconcile an existing consumer node automatically. This reload als
 ## Connect your client
 
 Use `https://<username>.mainroom.sh/v1` as your inference base URL and your Mainroom API key as the bearer credential. Keep that URL as your group adds or removes shared nodes. Follow the [inference guide](https://mainroom.sh/guides/inference) to discover models and verify a request.
+
+For every command and option, see the [CLI reference](https://mainroom.sh/guides/cli).
