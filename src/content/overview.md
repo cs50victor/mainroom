@@ -16,6 +16,10 @@ For example, Alice and Bob connect their Codex accounts and grant each other acc
 
 Choose who can use your node, which models they can access, and the limits that work for you.
 
+Use `mainroom friends invite <username>` to grant access, then `mainroom friends`
+to see sharing in both directions and each share's recorded usage. Usage shows
+requests and reserved output maxima, not remaining subscription balances.
+
 ## Set up with your agent
 
 Paste this into your coding agent to get started:
@@ -32,6 +36,7 @@ The [Mainroom setup skill](https://mainroom.sh/SKILL.md) walks an agent through 
 - [Authentication](https://mainroom.sh/guides/authentication): Understand Mainroom credentials and sign-in.
 - [Inference](https://mainroom.sh/guides/inference): Use your own and shared capacity through one endpoint.
 - [API and sharing](https://mainroom.sh/guides/api): Find control-plane routes and manage sharing grants.
+- [CLI reference](https://mainroom.sh/guides/cli): Find every command, option, and recovery behavior.
 - [Interactive API reference](https://mainroom.sh/docs): Explore the generated container API reference.
 
 ## Read with an agent

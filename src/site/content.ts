@@ -3,6 +3,7 @@ import gettingStarted from "../content/getting-started.md" with { type: "text" }
 import authentication from "../content/authentication.md" with { type: "text" };
 import inference from "../content/inference.md" with { type: "text" };
 import api from "../content/api.md" with { type: "text" };
+import cli from "../content/cli.md" with { type: "text" };
 import skill from "../content/SKILL.md" with { type: "text" };
 
 export const origin = "https://mainroom.sh";
@@ -23,6 +24,7 @@ export const pages = [
   },
   { path: "/guides/inference", title: "Inference", content: inference },
   { path: "/guides/api", title: "API and sharing", content: api },
+  { path: "/guides/cli", title: "CLI reference", content: cli },
 ];
 
 export { overview, skill };

@@ -55,7 +55,7 @@ const openApiDocument = createOpenApiDocument(
       title: "Mainroom API",
       version: mainroomVersion,
       description:
-        "Container API reference. Additional Worker authentication, sharing, and configuration routes are documented at https://mainroom.sh/guides/api. Inference uses https://<username>.mainroom.sh/v1.",
+        "Container API reference. Additional Worker authentication, account recovery, sharing, and configuration routes are documented at https://mainroom.sh/guides/api. CLI commands are documented at https://mainroom.sh/guides/cli. Inference uses https://<username>.mainroom.sh/v1.",
     },
     servers: [{ url: "https://mainroom.sh" }],
     components: {

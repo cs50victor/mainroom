@@ -56,9 +56,16 @@ copy .env.example to .env and configure development services; keep secrets out
 of commits and logs. Worker bindings and production requirements are in
 wrangler.jsonc. Run the modified CLI with `bun run cli --help`.
 
+Mock auth collapses several paths to one identity; use the distinct Clerk
+fixtures in [sharing tests](docs/testing-sharing.md) to verify friend isolation.
+
 Edit public documentation in src/content and UI components in src/site.
 src/generated/site.css is rebuilt and stays out of Git. Keep CLI examples and
 API documentation aligned with their implementations.
+
+The [CLI reference](src/content/cli.md) documents the command tree. Register new
+guides in src/site/content.ts so HTML, Markdown, navigation, sitemap, and agent
+exports share the same source.
 
 ## Verify and open a PR
 
@@ -82,6 +89,15 @@ identity during reauth`. Use the PR template to explain the problem, reused
 primitives, and validation. Include a minimal reproduction for bugs. Review
 the entire diff and remove unrelated changes before submitting. Maintainers
 squash-merge after review and passing CI; successful main CI triggers deployment.
+
+## Releases
+
+Successful deployment triggers the release workflow. It reads the version from
+package.json, skips an existing primary R2 archive, otherwise builds all four
+CLI archives, publishes checksums to R2 and GitHub, and triggers the Homebrew tap
+update. Keep package.json and src/version.ts in sync when preparing a release.
+Verify the workflow, tag, downloads, and deployed docs before announcing it;
+an existing R2 archive alone does not prove every release step succeeded.
 
 Guide structure informed by [Zig](https://codeberg.org/ziglang/zig/src/commit/e39a2afa24a8f3db4d40b40703254011acc97efa/README.md#contributing),
 [Ghostty](https://github.com/ghostty-org/ghostty/blob/492300cad104195411d12217dd22f1cd05f31376/CONTRIBUTING.md),

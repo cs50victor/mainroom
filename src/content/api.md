@@ -69,7 +69,7 @@ curl --fail-with-body https://mainroom.sh/v0/shares/consumers/me \
   -H "Authorization: Bearer ${MAINROOM_API_KEY}"
 ```
 
-If Bob has not initialized his node, he calls `POST /v0/tokenproxy/config/reload` with his own key, as shown in [getting started](https://mainroom.sh/guides/getting-started). He then verifies a request through his endpoint using the [inference guide](https://mainroom.sh/guides/inference). He can verify Alice's grant specifically by calling Alice's endpoint with his own key and the permitted model, route, and tier.
+If Bob has not initialized his node, he runs `mainroom friends connect`, which calls `POST /v0/tokenproxy/config/reload` with his own key. He then verifies a request through his endpoint using the [inference guide](https://mainroom.sh/guides/inference). He can verify Alice's grant specifically by calling Alice's endpoint with his own key and the permitted model, route, and tier.
 
 For mutual sharing, Bob repeats the provider step with his key and Alice's username. For a larger group, each provider grants access to the members they choose. Members may contribute and consume different amounts, including using shared capacity without contributing an account. Subscription credentials stay with each provider's setup; the group agrees how to split subscription costs.
 
@@ -89,6 +89,11 @@ The [OpenAPI document](https://mainroom.sh/openapi.json) and [interactive refere
 | POST   | /v0/tokenproxy/config/reload        | Mainroom API key   | Reconcile your machine with current account configuration.                    |
 
 Configuration responses may contain credentials. Treat them as private.
+
+Account updates use `{"enabled":true}` or `{"enabled":false}`. Status records
+include the stored filename and account state; use the [CLI recovery commands](https://mainroom.sh/guides/cli)
+to sign in again, upload a replacement, and verify inference. Enabling through
+the API validates the credential but does not replace it or complete recovery.
 
 ## JSON uploads
 
