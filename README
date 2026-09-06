@@ -40,6 +40,45 @@ starts tokenproxy with that file. The endpoint derives the user from the
 credential. Existing machines receive the new startup command in place.
 See src/fly-machines.ts and src/worker.ts for lifecycle and routing.
 
+## Connecting and recovering Codex accounts
+
+mainroom auth signup
+mainroom codex sync
+mainroom codex status
+mainroom codex reauth --account <filename.json>
+mainroom codex disable <filename.json>
+
+Mainroom sign-in identifies your Mainroom account. Codex sign-in authorizes the
+upstream account used by your remote tokenproxy. Renewing a Mainroom login does
+not renew a rejected Codex credential.
+
+codex status checks each stored account even when tokenproxy cannot start.
+It reports ready, reauth_required, disabled, invalid, or unavailable. Only an
+upstream 401 is classified as requiring reauth; network errors, rate limits,
+and other upstream failures remain unavailable. Status does not run inference.
+
+codex reauth uses the official Codex CLI, which must be installed locally.
+It opens a fresh sign-in session in a private temporary directory, checks the
+selected account identity, and uploads the refreshed credential to the same
+remote filename. Your usual local Codex login is preserved. Use --device-auth
+for device-code sign-in. With multiple stored accounts, choose one interactively
+or pass --account. A disabled account is enabled again after validation.
+
+One invalid enabled account can prevent tokenproxy from starting. codex disable
+keeps that account's credential but excludes it from future configurations.
+It stops the current machine, including any suspended snapshot, so a previous
+configuration cannot keep using the disabled account. This interrupts active
+requests. Use --yes to skip the confirmation in scripts.
+
+After sync, reauth, or disable, Mainroom checks every enabled account, reloads
+the remote configuration, and verifies a completed inference response using a
+Codex-supported model. If another account needs attention, it names the account
+and provides recovery commands. If no accounts remain enabled, it leaves the
+machine stopped and reports that an account must be connected. A saved credential
+or an HTTP 200 alone is not reported as successful inference.
+
+Users do not need the tokenproxy CLI locally. The remote machine runs it.
+
 ## Development and deployment
 
 The homepage serves an agent setup prompt directly; /docs remains the interactive

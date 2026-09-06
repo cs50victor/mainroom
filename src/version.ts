@@ -1,2 +1,2 @@
-export const mainroomVersion = "0.1.3";
+export const mainroomVersion = "0.1.4";
 export const mainroomUserAgent = `mainroom/${mainroomVersion}`;

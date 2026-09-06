@@ -1,11 +1,15 @@
 import { z } from "zod";
 import { errorMessage } from "./errors";
 import type { CliExchangeParams, CliOAuthConfig } from "./types";
+import {
+  codexAccountsSchema,
+  codexAccountUpdatedSchema,
+} from "../src/schemas/codex-accounts";
 
 type RequestOptions = {
   body?: BodyInit;
   contentType?: string;
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "PATCH";
   token?: string;
   uploadName?: string;
 };
@@ -41,6 +45,31 @@ const jsonUploadResponseSchema = z.object({
 });
 
 type RequestResult<T> = { ok: true; data: T } | { ok: false; error: string };
+
+export function fetchCodexAccounts(apiUrl: string, token: string) {
+  return requestJson(apiUrl, "/v0/tokenproxy/accounts", codexAccountsSchema, {
+    token,
+  });
+}
+
+export function setCodexAccountEnabled(
+  apiUrl: string,
+  token: string,
+  uploadName: string,
+  enabled: boolean,
+) {
+  return requestJson(
+    apiUrl,
+    `/v0/tokenproxy/accounts/${encodeURIComponent(uploadName)}`,
+    codexAccountUpdatedSchema,
+    {
+      token,
+      method: "PATCH",
+      contentType: "application/json",
+      body: JSON.stringify({ enabled }),
+    },
+  );
+}
 
 export function normalizeApiUrl(apiUrl: string): string {
   const url = new URL(apiUrl);
@@ -135,6 +164,7 @@ async function requestJson<T>(
       body: options.body,
       method: options.method ?? "GET",
       headers,
+      signal: AbortSignal.timeout(60000),
     });
     const body = await response.json().catch(() => undefined);
 

@@ -1,6 +1,6 @@
 {
   "name": "mainroom",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "type": "module",
   "bin": {
@@ -24,16 +24,19 @@
   },
   "dependencies": {
     "@clerk/backend": "3.7.1",
+    "@hono/zod-validator": "0.7.6",
     "@inquirer/prompts": "^8.5.2",
     "@scalar/hono-api-reference": "^0.11.3",
     "aws4fetch": "^1.0.20",
     "commander": "^15.0.0",
+    "eventsource-parser": "4.1.0",
     "fast-xml-parser": "^5.9.3",
     "hono": "^4.12.25",
     "hono-zod-openapi": "^1.1.1",
     "marked": "^18.0.11",
     "oauth4webapi": "^3.8.6",
     "smol-toml": "^1.7.0",
+    "write-file-atomic": "8.0.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -42,6 +45,7 @@
     "@tailwindcss/cli": "^4.3.3",
     "@tailwindcss/typography": "^0.5.20",
     "@types/bun": "^1.3.14",
+    "@types/write-file-atomic": "^4.0.3",
     "concurrently": "^10.0.5",
     "prettier": "^3.8.4",
     "tailwindcss": "^4.3.3",

@@ -38,12 +38,14 @@ The [OpenAPI document](https://mainroom.sh/openapi.json) and [interactive refere
 
 ## Authentication and configuration routes
 
-| Method | Path                         | Authentication     | Purpose                                                              |
-| ------ | ---------------------------- | ------------------ | -------------------------------------------------------------------- |
-| GET    | /v0/auth/cli/config          | Public             | Return the configured OAuth authorize URL, client ID, and token URL. |
-| POST   | /v0/auth/cli/exchange        | Clerk OAuth bearer | Create a Mainroom CLI key; accepts an optional username.             |
-| GET    | /v0/tokenproxy/config/me     | Mainroom API key   | Read your private tokenproxy configuration as TOML.                  |
-| POST   | /v0/tokenproxy/config/reload | Mainroom API key   | Reconcile your machine with current account configuration.           |
+| Method | Path                                | Authentication     | Purpose                                                                       |
+| ------ | ----------------------------------- | ------------------ | ----------------------------------------------------------------------------- |
+| GET    | /v0/auth/cli/config                 | Public             | Return the configured OAuth authorize URL, client ID, and token URL.          |
+| POST   | /v0/auth/cli/exchange               | Clerk OAuth bearer | Create a Mainroom CLI key; accepts an optional username.                      |
+| GET    | /v0/tokenproxy/config/me            | Mainroom API key   | Read your private tokenproxy configuration as TOML.                           |
+| GET    | /v0/tokenproxy/accounts             | Mainroom API key   | Check stored Codex accounts without requiring a running node.                 |
+| PATCH  | /v0/tokenproxy/accounts/:uploadName | Mainroom API key   | Set an account's enabled state with a JSON boolean; disabling stops its node. |
+| POST   | /v0/tokenproxy/config/reload        | Mainroom API key   | Reconcile your machine with current account configuration.                    |
 
 Configuration responses may contain credentials. Treat them as private.
 

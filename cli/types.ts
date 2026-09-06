@@ -9,6 +9,11 @@ export type CodexSyncOptions = {
   yes?: boolean;
 };
 
+export type CodexReauthOptions = {
+  account?: string;
+  deviceAuth?: boolean;
+};
+
 export type AuthMode = "login" | "signup";
 
 export type Credentials = {

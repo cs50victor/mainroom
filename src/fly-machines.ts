@@ -1,5 +1,6 @@
 export type FlyMachine = {
   id?: unknown;
+  instance_id?: unknown;
   state?: unknown;
   config?: Record<string, unknown> & { init?: { exec?: string[] } };
 };
@@ -71,6 +72,28 @@ export async function startFlyMachine(
     machine = await flyMachineApi<FlyMachine>(fly, path);
   }
   return machine;
+}
+
+export async function stopFlyMachine(
+  fly: FlyMachineConfig,
+  machineId: string,
+): Promise<void> {
+  const path = `/machines/${encodeURIComponent(machineId)}`;
+  const machine = await flyMachineApi<FlyMachine>(fly, path);
+  if (machine.state === "stopped") return;
+  if (typeof machine.instance_id !== "string")
+    throw new Error("Fly machine instance ID is missing");
+  // Stopping suspended machines also discards their stale in-memory config.
+  if (machine.state !== "stopping") {
+    await flyMachineApi(fly, `${path}/stop`, {
+      method: "POST",
+      body: JSON.stringify({ signal: "SIGTERM", timeout: "10s" }),
+    });
+  }
+  await flyMachineApi(
+    fly,
+    `${path}/wait?state=stopped&instance_id=${encodeURIComponent(machine.instance_id)}&timeout=30`,
+  );
 }
 
 export function flyMachineName(
