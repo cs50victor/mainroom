@@ -1,4 +1,4 @@
-import { codexModelsRequest, type CodexAccountAuth } from "./codex-accounts";
+import { codexAccountRequest, type CodexAccountAuth } from "./codex-accounts";
 
 export type FlyMachine = {
   id?: unknown;
@@ -201,13 +201,14 @@ export function flyMachineFetch(
   );
 }
 
-export async function flyCodexModels(
+export async function flyCodexRequest(
   fly: FlyMachineConfig,
   machineId: string,
   auth: CodexAccountAuth,
+  resource: "models" | "usage" = "models",
 ): Promise<Response> {
   try {
-    const request = codexModelsRequest(auth);
+    const request = codexAccountRequest(auth, resource);
     const command = [
       "curl",
       "-q",

@@ -250,9 +250,9 @@ describe("flyMachineFetch", () => {
   });
 });
 
-describe("flyCodexModels", () => {
+describe("flyCodexRequest", () => {
   test("uses a fixed curl argv without a shell or redirects and preserves provider status", async () => {
-    const { flyCodexModels } = await import("./fly-machines");
+    const { flyCodexRequest } = await import("./fly-machines");
     for (const status of [200, 401, 403, 302]) {
       globalThis.fetch = (async (url, init) => {
         expect(String(url)).toEndWith("/machines/owner-machine/exec");
@@ -274,7 +274,7 @@ describe("flyCodexModels", () => {
           exit_signal: 0,
         });
       }) as typeof fetch;
-      const response = await flyCodexModels(flyConfig(), "owner-machine", {
+      const response = await flyCodexRequest(flyConfig(), "owner-machine", {
         accountId: "account",
         accessToken: "token;$(not-a-command)",
       });
@@ -284,7 +284,7 @@ describe("flyCodexModels", () => {
   });
 
   test("rejects malformed exec output and never exposes Fly diagnostic credentials", async () => {
-    const { flyCodexModels } = await import("./fly-machines");
+    const { flyCodexRequest } = await import("./fly-machines");
     for (const result of [
       { exit_code: 1, exit_signal: 0, stdout: "secret\n200" },
       { exit_code: 0, exit_signal: 9, stdout: "secret\n200" },
@@ -293,7 +293,7 @@ describe("flyCodexModels", () => {
     ]) {
       globalThis.fetch = (async () => Response.json(result)) as typeof fetch;
       await expect(
-        flyCodexModels(flyConfig(), "owner-machine", {
+        flyCodexRequest(flyConfig(), "owner-machine", {
           accountId: "account",
           accessToken: "secret",
         }),
@@ -304,7 +304,7 @@ describe("flyCodexModels", () => {
     globalThis.fetch = (async () =>
       new Response("secret echoed by Fly", { status: 500 })) as typeof fetch;
     await expect(
-      flyCodexModels(flyConfig(), "owner-machine", {
+      flyCodexRequest(flyConfig(), "owner-machine", {
         accountId: "account",
         accessToken: "secret",
       }),

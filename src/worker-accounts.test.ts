@@ -100,7 +100,7 @@ async function fixture() {
       get: (name: string) => {
         expect(name).toContain("account-owner");
         return {
-          checkCodexModels: async (
+          probeCodexAccount: async (
             subject: string,
             auth: { accountId: string; accessToken: string },
           ) => {

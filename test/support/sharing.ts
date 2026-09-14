@@ -129,6 +129,21 @@ export async function sharingFixture(
     USER_MACHINE_CONTAINER: {
       idFromName: (name: string) => name,
       get: (name: string) => ({
+        probeCodexAccount: async (
+          subject: string,
+          auth: { accountId: string },
+          resource: string,
+        ) => {
+          if (
+            !name.includes(subject) ||
+            auth.accountId !== `codex_${subject.replace("user_", "")}`
+          )
+            throw new Error("Unexpected account ownership");
+          return upstream(
+            new Request(`https://provider.test/${resource}`),
+            name,
+          );
+        },
         restartForShareChange: async () => {
           reconciled.push(name);
           if (reconcileFails) throw new Error("fixture node unavailable");

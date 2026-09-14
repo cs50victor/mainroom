@@ -85,8 +85,8 @@ export function DashboardPage() {
               <span id="quota-observed" class="dashboard-help" />
             </div>
             <p class="dashboard-caption">
-              Latest limits reported by your providers. Missing limits are
-              unavailable, not unlimited.
+              Provider-reported usage windows and credit balances. Refresh to
+              check current availability.
             </p>
             <div
               id="dashboard-quota"

@@ -21,7 +21,7 @@ import {
   verifyApiKey,
 } from "./helpers";
 import {
-  flyCodexModels,
+  flyCodexRequest,
   flyMachineApi,
   flyMachineConfig,
   flyMachineFetch,
@@ -32,7 +32,12 @@ import {
   type FlyMachine,
 } from "./fly-machines";
 import { apiKeySchema, errorSchema } from "./schemas/api-keys";
-import { checkCodexAccount, type CodexAccountAuth } from "./codex-accounts";
+import {
+  checkCodexAccount,
+  codexAuthIdentity,
+  type CodexAccountAuth,
+} from "./codex-accounts";
+import { parseCodexUsage } from "./codex-usage";
 import { dashboardSubject } from "./dashboard-auth";
 import {
   codexAccountsSchema,
@@ -529,9 +534,10 @@ export class UserMachineContainer extends DurableObject<Env> {
     return flyMachineFetch(fly, record, tokenproxyRequest(request, secret));
   }
 
-  async checkCodexModels(
+  async probeCodexAccount(
     subject: string,
     auth: CodexAccountAuth,
+    resource: "models" | "usage" = "models",
   ): Promise<Response> {
     const record = await this.ctx.storage.get<UserMachineRecord>(
       this.storageKey,
@@ -546,7 +552,7 @@ export class UserMachineContainer extends DurableObject<Env> {
         `/machines/${encodeURIComponent(machine.flyMachineId)}/wait?state=started&timeout=15`,
       );
     }
-    return flyCodexModels(fly, machine.flyMachineId, auth);
+    return flyCodexRequest(fly, machine.flyMachineId, auth, resource);
   }
 
   private async reloadConfig(
@@ -1228,7 +1234,7 @@ async function codexAccounts(c: WorkerContext): Promise<Response> {
               stored.text,
               disabled.names.includes(uploadName),
               (auth) =>
-                userMachineStub(c.env, machineId(subject)).checkCodexModels(
+                userMachineStub(c.env, machineId(subject)).probeCodexAccount(
                   subject,
                   auth,
                 ),
@@ -1240,6 +1246,77 @@ async function codexAccounts(c: WorkerContext): Promise<Response> {
   }
   const username = await getCliSubjectUsername(config, subject);
   return c.json({ accounts, username }, 200, { "cache-control": "no-store" });
+}
+
+async function codexUsage(c: WorkerContext): Promise<Response> {
+  const subject = c.var.subject;
+  const uploads = await s3ListJsonUploads(c.env, subject);
+  if ("error" in uploads)
+    return c.json({ error: uploads.error }, uploads.status);
+  const disabled = await s3ListNames(c.env, disabledAccountPrefix(subject));
+  if ("error" in disabled)
+    return c.json({ error: disabled.error }, disabled.status);
+  const observedAt = new Date().toISOString();
+  const accounts: object[] = [];
+  for (let offset = 0; offset < uploads.names.length; offset += 4) {
+    accounts.push(
+      ...(await Promise.all(
+        uploads.names.slice(offset, offset + 4).map(async (uploadName) => {
+          const stored = await s3ReadObject(
+            c.env,
+            jsonUploadKey(subject, uploadName),
+          );
+          const auth =
+            "error" in stored ? undefined : codexAuthIdentity(stored.text);
+          const identity = { display_name: auth?.email || uploadName };
+          if (disabled.names.includes(uploadName))
+            return {
+              ...identity,
+              health: "disabled",
+              usage: [],
+              detail: "Account is disabled.",
+            };
+          if (!auth)
+            return {
+              ...identity,
+              health: "unavailable",
+              usage: [],
+              detail: "Could not read a valid stored credential.",
+            };
+          try {
+            const response = await userMachineStub(
+              c.env,
+              machineId(subject),
+            ).probeCodexAccount(subject, auth, "usage");
+            if (!response.ok) {
+              await response.body?.cancel();
+              return {
+                ...identity,
+                health: "unavailable",
+                usage: [],
+                detail: `Provider usage check returned HTTP ${response.status}.`,
+              };
+            }
+            return {
+              ...identity,
+              health: "ready",
+              ...parseCodexUsage(await response.json(), observedAt),
+            };
+          } catch {
+            return {
+              ...identity,
+              health: "unavailable",
+              usage: [],
+              detail: "Could not read current provider usage. Retry later.",
+            };
+          }
+        }),
+      )),
+    );
+  }
+  return c.json({ observed_at: observedAt, accounts }, 200, {
+    "cache-control": "no-store",
+  });
 }
 
 async function setCodexAccountEnabled(
@@ -1256,7 +1333,7 @@ async function setCodexAccountEnabled(
       stored.text,
       false,
       (auth) =>
-        userMachineStub(c.env, machineId(subject)).checkCodexModels(
+        userMachineStub(c.env, machineId(subject)).probeCodexAccount(
           subject,
           auth,
         ),
@@ -2103,7 +2180,7 @@ workerApp.patch(
   },
 );
 workerApp.get("/v0/dashboard/models", (c) => dashboardRuntime(c, "/v1/models"));
-workerApp.get("/v0/dashboard/usage", (c) => dashboardRuntime(c, "/usage"));
+workerApp.get("/v0/dashboard/usage", codexUsage);
 workerApp.get("/v0/dashboard/shares/providers", listShareProviders);
 workerApp.get("/v0/dashboard/shares/consumers/me", listConsumerShares);
 workerApp.put(
