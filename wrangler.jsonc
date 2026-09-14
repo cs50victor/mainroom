@@ -16,7 +16,7 @@
     },
     {
       "type": "Text",
-      "globs": ["**/*.md", "**/*.css", "**/copy-prompt.js"],
+      "globs": ["**/*.md", "**/*.css", "**/copy-prompt.js", "**/dashboard.js"],
       "fallthrough": true,
     },
   ],
