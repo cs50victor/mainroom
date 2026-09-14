@@ -21,6 +21,7 @@ import {
   verifyApiKey,
 } from "./helpers";
 import {
+  flyCodexModels,
   flyMachineApi,
   flyMachineConfig,
   flyMachineFetch,
@@ -31,7 +32,7 @@ import {
   type FlyMachine,
 } from "./fly-machines";
 import { apiKeySchema, errorSchema } from "./schemas/api-keys";
-import { checkCodexAccount } from "./codex-accounts";
+import { checkCodexAccount, type CodexAccountAuth } from "./codex-accounts";
 import { dashboardSubject } from "./dashboard-auth";
 import {
   codexAccountsSchema,
@@ -526,6 +527,26 @@ export class UserMachineContainer extends DurableObject<Env> {
     const fly = requiredFlyMachineConfig(this.env);
     record = await this.ensureFlyMachine(record);
     return flyMachineFetch(fly, record, tokenproxyRequest(request, secret));
+  }
+
+  async checkCodexModels(
+    subject: string,
+    auth: CodexAccountAuth,
+  ): Promise<Response> {
+    const record = await this.ctx.storage.get<UserMachineRecord>(
+      this.storageKey,
+    );
+    if (!record || record.subject !== subject)
+      throw new Error("Account check requires the owner's inference machine");
+    const fly = requiredFlyMachineConfig(this.env);
+    const machine = await this.ensureFlyMachine(record);
+    if (machine.state !== "started") {
+      await flyMachineApi(
+        fly,
+        `/machines/${encodeURIComponent(machine.flyMachineId)}/wait?state=started&timeout=15`,
+      );
+    }
+    return flyCodexModels(fly, machine.flyMachineId, auth);
   }
 
   private async reloadConfig(
@@ -1206,6 +1227,11 @@ async function codexAccounts(c: WorkerContext): Promise<Response> {
               uploadName,
               stored.text,
               disabled.names.includes(uploadName),
+              (auth) =>
+                userMachineStub(c.env, machineId(subject)).checkCodexModels(
+                  subject,
+                  auth,
+                ),
             );
           }
         }),
@@ -1225,7 +1251,16 @@ async function setCodexAccountEnabled(
   const stored = await s3ReadObject(c.env, jsonUploadKey(subject, uploadName));
   if ("error" in stored) return c.json({ error: stored.error }, stored.status);
   if (enabled) {
-    const account = await checkCodexAccount(uploadName, stored.text);
+    const account = await checkCodexAccount(
+      uploadName,
+      stored.text,
+      false,
+      (auth) =>
+        userMachineStub(c.env, machineId(subject)).checkCodexModels(
+          subject,
+          auth,
+        ),
+    );
     if (account.status !== "ready")
       return c.json({ error: account.detail ?? "Account is not ready" }, 409);
   }

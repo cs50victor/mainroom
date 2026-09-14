@@ -249,3 +249,67 @@ describe("flyMachineFetch", () => {
     });
   });
 });
+
+describe("flyCodexModels", () => {
+  test("uses a fixed curl argv without a shell or redirects and preserves provider status", async () => {
+    const { flyCodexModels } = await import("./fly-machines");
+    for (const status of [200, 401, 403, 302]) {
+      globalThis.fetch = (async (url, init) => {
+        expect(String(url)).toEndWith("/machines/owner-machine/exec");
+        const body = JSON.parse(String(init?.body));
+        expect(body.timeout).toBe(15);
+        expect(body.command.slice(0, 2)).toEqual(["curl", "-q"]);
+        expect(body.command).not.toContain("--location");
+        expect(body.command).not.toContain("-L");
+        expect(body.command).not.toContain("bash");
+        expect(body.command).toContain(
+          "authorization: Bearer token;$(not-a-command)",
+        );
+        expect(body.command.at(-1)).toBe(
+          "https://chatgpt.com/backend-api/codex/models?client_version=0.141.0",
+        );
+        return Response.json({
+          stdout: `{\"models\":[{\"slug\":\"model-a\"}]}\n${status}`,
+          exit_code: 0,
+          exit_signal: 0,
+        });
+      }) as typeof fetch;
+      const response = await flyCodexModels(flyConfig(), "owner-machine", {
+        accountId: "account",
+        accessToken: "token;$(not-a-command)",
+      });
+      expect(response.status).toBe(status);
+      expect(await response.json()).toEqual({ models: [{ slug: "model-a" }] });
+    }
+  });
+
+  test("rejects malformed exec output and never exposes Fly diagnostic credentials", async () => {
+    const { flyCodexModels } = await import("./fly-machines");
+    for (const result of [
+      { exit_code: 1, exit_signal: 0, stdout: "secret\n200" },
+      { exit_code: 0, exit_signal: 9, stdout: "secret\n200" },
+      { exit_code: 0, exit_signal: 0, stdout: "secret" },
+      { exit_code: 0, exit_signal: 0, stdout: "secret\n000" },
+    ]) {
+      globalThis.fetch = (async () => Response.json(result)) as typeof fetch;
+      await expect(
+        flyCodexModels(flyConfig(), "owner-machine", {
+          accountId: "account",
+          accessToken: "secret",
+        }),
+      ).rejects.toThrow(
+        "Could not check Codex access from the inference machine.",
+      );
+    }
+    globalThis.fetch = (async () =>
+      new Response("secret echoed by Fly", { status: 500 })) as typeof fetch;
+    await expect(
+      flyCodexModels(flyConfig(), "owner-machine", {
+        accountId: "account",
+        accessToken: "secret",
+      }),
+    ).rejects.toThrow(
+      "Could not check Codex access from the inference machine.",
+    );
+  });
+});
