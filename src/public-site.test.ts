@@ -18,6 +18,35 @@ describe("public website", () => {
     );
   });
 
+  test("serves a private dashboard shell with sign-in and no embedded credentials", async () => {
+    const response = await site.request(`${origin}/dashboard`);
+    const body = await response.text();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(body).toContain('name="robots" content="noindex, nofollow"');
+    expect(body).toContain('id="dashboard-sign-in"');
+    expect(body).toContain('id="dashboard-content" hidden');
+    expect(body).toContain('src="/dashboard.js"');
+    expect(body).not.toContain('rel="alternate"');
+    expect(body).toContain('name="route" value="responses" checked');
+    expect(body).not.toContain("defaultChecked");
+    expect(body).not.toContain("pk_live_");
+    expect(body).not.toContain("sk_live_");
+    expect(
+      (await site.request(`${origin}/dashboard/`)).headers.get("Location"),
+    ).toBe("/dashboard");
+    expect(await (await site.request(origin)).text()).toContain(
+      'href="/dashboard"',
+    );
+  });
+
+  test("serves the dashboard script with safe content type", async () => {
+    const response = await site.request(`${origin}/dashboard.js`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toStartWith("text/javascript");
+    expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
+  });
+
   test("keeps the existing interactive API reference at /docs", async () => {
     const response = await site.request(`${origin}/docs`);
     expect(response.status).toBe(200);

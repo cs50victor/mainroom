@@ -6,9 +6,10 @@ import { description, origin } from "./content";
 type LayoutProps = {
   title: string;
   path: string;
-  markdownPath: string;
+  markdownPath?: string;
   children: Child;
   landing?: boolean;
+  dashboard?: boolean;
 };
 
 function Brand() {
@@ -32,6 +33,7 @@ function Header({ landing }: { landing: boolean }) {
           <Brand />
         </a>
         <nav aria-label="Main navigation">
+          <a href="/dashboard">Dashboard</a>
           <a href="/guides">Guides</a>
           <a href="/docs">API docs</a>
           <a href="https://github.com/cs50victor/mainroom">
@@ -62,6 +64,7 @@ function Header({ landing }: { landing: boolean }) {
         class="flex gap-4 text-xs text-[#64675f] sm:gap-7 sm:text-[13px] [&_a:hover]:text-[#171a14] [&_a:hover]:underline"
         aria-label="Main navigation"
       >
+        <a href="/dashboard">Dashboard</a>
         <a href="/guides">Guides</a>
         <a href="/docs">API docs</a>
         <a href="https://github.com/cs50victor/mainroom">
@@ -108,7 +111,12 @@ export function Layout({
   markdownPath,
   children,
   landing = false,
+  dashboard = false,
 }: LayoutProps) {
+  let bodyClass =
+    "flex min-h-svh flex-col leading-normal [&_a]:underline-offset-4 [&_a:focus-visible]:outline-2 [&_a:focus-visible]:outline-offset-[5px] [&_a:focus-visible]:outline-[#50594a] [&_button:focus-visible]:outline-2 [&_button:focus-visible]:outline-offset-[5px] [&_button:focus-visible]:outline-[#50594a]";
+  if (dashboard) bodyClass = "dashboard-site";
+  else if (landing) bodyClass = "site";
   const structuredData = {
     "@context": "https://schema.org",
     "@type": "WebSite",
@@ -148,11 +156,13 @@ export function Layout({
             }
           />
           <link rel="canonical" href={`${origin}${path}`} />
-          <link
-            rel="alternate"
-            type="text/markdown"
-            href={`${origin}${markdownPath}`}
-          />
+          {markdownPath && (
+            <link
+              rel="alternate"
+              type="text/markdown"
+              href={`${origin}${markdownPath}`}
+            />
+          )}
           <link
             rel="describedby"
             type="text/markdown"
@@ -165,14 +175,10 @@ export function Layout({
             dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
           />
           {landing && <script src="/site.js" defer />}
+          {dashboard && <meta name="robots" content="noindex, nofollow" />}
+          {dashboard && <script src="/dashboard.js" defer />}
         </head>
-        <body
-          class={
-            landing
-              ? "site"
-              : "flex min-h-svh flex-col leading-normal [&_a]:underline-offset-4 [&_a:focus-visible]:outline-2 [&_a:focus-visible]:outline-offset-[5px] [&_a:focus-visible]:outline-[#50594a] [&_button:focus-visible]:outline-2 [&_button:focus-visible]:outline-offset-[5px] [&_button:focus-visible]:outline-[#50594a]"
-          }
-        >
+        <body class={bodyClass}>
           <a
             class={
               landing

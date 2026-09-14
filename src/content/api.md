@@ -4,17 +4,20 @@ The Mainroom control-plane origin is `https://mainroom.sh`. Send JSON bodies wit
 
 ## Share with a friend
 
+Use the [dashboard](https://mainroom.sh/dashboard) to manage connected accounts, share models, set daily request or reserved-output-token allowances, set concurrency limits, and view recorded usage. Unlimited grants impose no Mainroom caps; provider limits still apply. All-model selections save the current model inventory, so edit the grant to include models added later.
+
 Use the CLI with your friend's existing Mainroom username:
 
 ```sh
 mainroom friends invite bob
+mainroom friends invite bob --full-access
 mainroom friends
 mainroom friends disable bob
 mainroom friends enable bob
 mainroom friends revoke bob
 ```
 
-Invite prompts for ready Codex models and a daily request limit, then asks for
+Invite prompts for ready Codex models and an unlimited or daily request allowance, then asks for
 confirmation. It grants access immediately and replaces any existing share for
 that friend. There is no email invitation or acceptance step. Bob must first
 sign up through Clerk and choose his username. For scripts or other providers,

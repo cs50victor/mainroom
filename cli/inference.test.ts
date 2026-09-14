@@ -1,5 +1,27 @@
 import { expect, test } from "bun:test";
-import { hasCompletedResponse } from "./inference";
+import { hasCompletedResponse, verifyInference } from "./inference";
+
+test("recovery sends message-list input accepted by Codex", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input, init) => {
+    if (new URL(String(input)).pathname === "/v1/models") {
+      return Response.json({ data: [{ id: "test-model" }] });
+    }
+    const body = JSON.parse(String(init?.body));
+    return Array.isArray(body.input) && body.input[0]?.role === "user"
+      ? Response.json({ status: "completed" })
+      : Response.json({ detail: "Input must be a list" }, { status: 400 });
+  }) as typeof fetch;
+  try {
+    await expect(
+      verifyInference("https://mainroom.test", "synthetic-key", "alice", [
+        "test-model",
+      ]),
+    ).resolves.toBeUndefined();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 test("requires a completed inference, not just HTTP 200 or a model list", async () => {
   for (const body of [

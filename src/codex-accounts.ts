@@ -91,7 +91,7 @@ export async function checkCodexAccount(
           "user-agent": "codex-cli",
           originator: "codex_cli_rs",
         },
-        redirect: "error",
+        redirect: "manual",
         signal: AbortSignal.timeout(10000),
       },
     );

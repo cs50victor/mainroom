@@ -1,5 +1,6 @@
 @import "tailwindcss" source(none);
 @import "./landing.css";
+@import "./dashboard.css";
 @source "./**/*.tsx";
 @plugin "@tailwindcss/typography";
 

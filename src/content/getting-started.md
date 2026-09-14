@@ -66,7 +66,9 @@ is needed. See [account recovery](https://mainroom.sh/guides/authentication).
 
 ## Connect your group's nodes
 
-Exchange Mainroom usernames with your group. Run `mainroom friends invite <username>` to choose models and a daily request limit, then `mainroom friends` to see your friends, sharing status, and recorded usage in both directions. Follow the [sharing walkthrough](https://mainroom.sh/guides/api) for all commands and API options.
+Sign in to the [dashboard](https://mainroom.sh/dashboard) to check account status, share with a friend, change limits, and see remaining daily sharing allowances. Provider quota windows appear when reported; Mainroom does not calculate a subscription credit balance.
+
+Exchange Mainroom usernames with your group. You can also run `mainroom friends invite <username>` to choose models and limits, or `mainroom friends invite <username> --full-access` to grant all currently available models without Mainroom caps. Provider limits still apply. Run `mainroom friends` to see sharing status and recorded usage in both directions. Follow the [sharing walkthrough](https://mainroom.sh/guides/api) for all commands and API options.
 
 Grants are directional: Alice granting Bob access lets Bob use Alice's node. Bob grants Alice access separately to share both ways. Repeat for the members each provider wants to include. Each member keeps their own API key; friends do not exchange subscription credentials.
 

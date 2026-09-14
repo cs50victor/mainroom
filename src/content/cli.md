@@ -55,19 +55,43 @@ reload fails, or inference fails. After disabling the last Codex account, use
 | `mainroom friends disable <username>` | Pause an outgoing grant.                                                         |
 | `mainroom friends revoke <username>`  | Revoke an active or disabled outgoing grant.                                     |
 
-Invite prompts for models from ready Codex accounts, a daily request limit, and
-confirmation. It permits Responses requests with the `auto` service tier by
-default. For scripts, supply the scope and confirmation explicitly:
+Invite prompts for models from ready Codex accounts, unlimited access or a daily
+request limit, and confirmation. Responses and the `auto` service tier are the
+default scope. For scripts, select models, limits, and confirmation explicitly:
 
 ```sh
 mainroom friends invite bob --models <model-id> --requests-per-day 100 --yes
+mainroom friends invite beehuman --full-access --yes
+mainroom friends invite bob --models <model-id> --unlimited --yes
 ```
 
-`--models <models...>` and `--service-tiers <tiers...>` accept multiple values.
-`--requests-per-day <count>` must be a positive whole number. Enable, disable,
-and revoke accept `--yes`; without a terminal, all grant changes require it.
-For additional routes, token limits, or concurrency limits, use the
-[sharing API](https://mainroom.sh/guides/api).
+`--full-access` grants every model currently reported by ready Codex accounts,
+all routes and service tiers (`auto`, `default`, `priority`, `flex`, `fast`),
+Responses WebSocket and compact access, without Mainroom limits. It cannot be
+combined with other scope or limit options. Upstream account limits still apply.
+
+Use `--all-models` to select the same model inventory with custom permissions or
+limits. This saves concrete model IDs from ready Codex accounts, not a wildcard;
+rerun the invite to include newly available models. `--models <models...>` accepts
+explicit supported IDs from any configured provider. Provider availability still
+determines which requests succeed.
+
+| Invite option                       | Purpose                                                   |
+| ----------------------------------- | --------------------------------------------------------- |
+| `--routes <routes...>`              | Allow `responses`, `chat_completions`, or `messages`.     |
+| `--service-tiers <tiers...>`        | Select allowed service tiers.                             |
+| `--supports-responses-ws`           | Allow Responses WebSocket requests.                       |
+| `--supports-compact`                | Allow compact Responses requests.                         |
+| `--requests-per-day <count>`        | Cap admitted requests per UTC day.                        |
+| `--tokens-per-day <count>`          | Cap reserved output tokens per UTC day.                   |
+| `--max-concurrent-requests <count>` | Cap simultaneous requests.                                |
+| `--unlimited`                       | Remove all Mainroom request, token, and concurrency caps. |
+
+Limits must be positive whole numbers. Omitted limits are unlimited when another
+limit is supplied; `--unlimited` cannot be combined with any cap. Mainroom does
+not enforce dollar or credit caps or convert subscriptions into a token allowance.
+Enable, disable, and revoke also accept `--yes`; without a terminal, all grant
+changes require it.
 
 Invites grant access without email or acceptance. Sharing is directional;
 your friend creates a separate grant to share back. Only shares involving you

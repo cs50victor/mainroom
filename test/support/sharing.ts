@@ -252,6 +252,7 @@ export async function sharingFixture(
     method = "GET",
     body?: object,
     origin = "https://mainroom.sh",
+    headers: Record<string, string> = {},
   ) => {
     const tasks: Promise<unknown>[] = [];
     const response = await worker.fetch(
@@ -260,6 +261,7 @@ export async function sharingFixture(
         headers: {
           authorization: `Bearer sk_${username}_test`,
           "content-type": "application/json",
+          ...headers,
         },
         body: body === undefined ? undefined : JSON.stringify(body),
       }),
@@ -277,6 +279,7 @@ export async function sharingFixture(
   };
   return {
     call,
+    use: server.use.bind(server),
     users,
     keys,
     objects,

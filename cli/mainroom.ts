@@ -146,7 +146,35 @@ shareCommand
     "Maximum requests per UTC day",
     positiveIntegerOption,
   )
-  .option("--service-tiers <tiers...>", "Allowed service tiers", ["auto"])
+  .option(
+    "--all-models",
+    "Share every model currently reported by ready Codex accounts",
+  )
+  .option(
+    "--unlimited",
+    "Remove all Mainroom request, token, and concurrency limits",
+  )
+  .option(
+    "--full-access",
+    "All current ready Codex models, routes, tiers, WebSocket and compact, without limits",
+  )
+  .option(
+    "--tokens-per-day <count>",
+    "Maximum reserved output tokens per UTC day",
+    positiveIntegerOption,
+  )
+  .option(
+    "--max-concurrent-requests <count>",
+    "Maximum simultaneous requests",
+    positiveIntegerOption,
+  )
+  .option(
+    "--routes <routes...>",
+    "Allowed routes: responses, chat_completions, messages (default: responses)",
+  )
+  .option("--service-tiers <tiers...>", "Allowed service tiers (default: auto)")
+  .option("--supports-responses-ws", "Allow Responses WebSocket requests")
+  .option("--supports-compact", "Allow compact Responses requests")
   .option("--yes", "Apply the share without confirmation")
   .action((username, options) =>
     runCommand(() => inviteFriend(username, options)),
