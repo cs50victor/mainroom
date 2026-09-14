@@ -306,7 +306,7 @@
     if (!data.accounts?.length)
       return empty(
         "dashboard-quota",
-        "Provider quota is unavailable. Connect an account and make a request to receive observed limits.",
+        "The current provider usage check is unavailable. Connect an account or refresh to retry.",
       );
     for (const account of data.accounts) {
       const card = node("article", "dashboard-card");
@@ -315,8 +315,22 @@
         card.append(
           detail(typeof account.health === "string" ? account.health : ""),
         );
+      if (account.detail) card.append(detail(account.detail));
       if (!account.usage?.length)
         card.append(detail("Remaining provider quota is unavailable."));
+      const credits = account.credits;
+      if (credits?.unlimited) {
+        card.append(detail("Credits: unlimited"));
+      } else if (
+        typeof credits?.balance === "string" &&
+        credits.balance.trim()
+      ) {
+        card.append(detail(`Credits: ${credits.balance}`));
+      } else if (credits?.has_credits === false) {
+        card.append(detail("No provider credits available."));
+      } else {
+        card.append(detail("Provider credit balance is unavailable."));
+      }
       for (const window of account.usage || []) {
         const line = node("div", "dashboard-usage");
         const remaining = window.remaining_percent ?? window.remaining;

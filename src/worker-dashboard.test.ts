@@ -183,29 +183,58 @@ test("enabling an account from the dashboard updates the owner's runtime", async
   );
 });
 
-test("dashboard models and observed quotas use only the signed-in user's runtime", async () => {
+test("dashboard model discovery uses only the signed-in user's runtime", async () => {
   const f = await dashboardFixture();
   fixture.setUpstream(async (request, name) =>
-    Response.json({
-      path: new URL(request.url).pathname,
-      owner: name,
-    }),
+    Response.json({ path: new URL(request.url).pathname, owner: name }),
   );
-  for (const [path, upstream] of [
-    ["/models", "/v1/models"],
-    ["/usage", "/usage"],
-  ]) {
-    const response = await f.call("alice", path);
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
-      path: upstream,
-      owner: expect.stringContaining("user_alice"),
+  const response = await f.call("alice", "/models");
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({
+    path: "/v1/models",
+    owner: expect.stringContaining("user_alice"),
+  });
+});
+
+test("dashboard reads current quota from the exact owner's stored account and redacts failures", async () => {
+  const f = await dashboardFixture();
+  fixture.setUpstream(async (request, name) => {
+    expect(new URL(request.url).pathname).toBe("/usage");
+    expect(name).toContain("user_alice");
+    return Response.json({
+      plan_type: "pro",
+      rate_limit: {
+        allowed: true,
+        limit_reached: false,
+        primary_window: {
+          used_percent: 27,
+          limit_window_seconds: 18000,
+          reset_at: 1800000000,
+        },
+      },
+      credits: { has_credits: true, unlimited: false, balance: "42.50" },
+      user_id: "private-user",
     });
-  }
+  });
+  const response = await f.call("alice", "/usage");
+  expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toContain("no-store");
+  const body = await response.json();
+  expect(body.accounts[0]).toMatchObject({
+    health: "ready",
+    usage: [{ remaining_percent: 73 }],
+    credits: { balance: "42.50" },
+  });
+  expect(JSON.stringify(body)).not.toContain("private-user");
   fixture.setUpstream(async () => {
     throw new Error("private backend details");
   });
-  const response = await f.call("alice", "/usage");
-  expect(response.status).toBe(502);
-  expect(await response.text()).not.toContain("private backend details");
+  const unavailable = await f.call("alice", "/usage");
+  const result = await unavailable.json();
+  expect(result.accounts[0]).toMatchObject({
+    health: "unavailable",
+    usage: [],
+  });
+  expect(result.accounts[0].credits).toBeUndefined();
+  expect(JSON.stringify(result)).not.toContain("private backend details");
 });

@@ -66,7 +66,7 @@ is needed. See [account recovery](https://mainroom.sh/guides/authentication).
 
 ## Connect your group's nodes
 
-Sign in to the [dashboard](https://mainroom.sh/dashboard) to check account status, share with a friend, change limits, and see remaining daily sharing allowances. Provider quota windows appear when reported; Mainroom does not calculate a subscription credit balance.
+Sign in to the [dashboard](https://mainroom.sh/dashboard) to check account status, share with a friend, change limits, and see remaining daily sharing allowances. Current provider quota windows and reported credit balances appear when available. Missing provider data is shown as unavailable.
 
 Exchange Mainroom usernames with your group. You can also run `mainroom friends invite <username>` to choose models and limits, or `mainroom friends invite <username> --full-access` to grant all currently available models without Mainroom caps. Provider limits still apply. Run `mainroom friends` to see sharing status and recorded usage in both directions. Follow the [sharing walkthrough](https://mainroom.sh/guides/api) for all commands and API options.
 

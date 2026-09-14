@@ -83,7 +83,7 @@ export async function checkCodexAccount(
       detail: "Unrecognized Codex credential file",
     };
   try {
-    let response = await fetch(codexModelsRequest(auth));
+    let response = await fetch(codexAccountRequest(auth));
     if (response.status === 403 && fallback) {
       await response.body?.cancel();
       response = await fallback(auth);
@@ -133,9 +133,14 @@ export async function checkCodexAccount(
   }
 }
 
-export function codexModelsRequest(auth: CodexAccountAuth): Request {
+export function codexAccountRequest(
+  auth: CodexAccountAuth,
+  resource: "models" | "usage" = "models",
+): Request {
   return new Request(
-    "https://chatgpt.com/backend-api/codex/models?client_version=0.141.0",
+    resource === "usage"
+      ? "https://chatgpt.com/backend-api/wham/usage"
+      : "https://chatgpt.com/backend-api/codex/models?client_version=0.141.0",
     {
       headers: {
         authorization: `Bearer ${auth.accessToken}`,
