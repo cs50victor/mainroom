@@ -45,7 +45,7 @@ export async function verifyInference(
     body: JSON.stringify({
       model,
       instructions: "Reply with OK.",
-      input: "Connection check",
+      input: [{ role: "user", content: "Connection check" }],
       store: false,
       stream: true,
     }),

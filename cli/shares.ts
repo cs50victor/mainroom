@@ -9,7 +9,11 @@ import {
   updateShare,
 } from "./api";
 import { readCredentials } from "./credentials";
-import { normalizeShareGrantInput, type ShareLimits } from "../src/shares";
+import {
+  normalizeShareGrantInput,
+  shareRoutes,
+  type ShareLimits,
+} from "../src/shares";
 import {
   shareUsageSchema,
   incomingSharesSchema,
@@ -18,8 +22,16 @@ import {
 
 type InviteOptions = {
   models?: string[];
+  allModels?: boolean;
+  fullAccess?: boolean;
+  unlimited?: boolean;
   requestsPerDay?: number;
-  serviceTiers: string[];
+  tokensPerDay?: number;
+  maxConcurrentRequests?: number;
+  routes?: string[];
+  serviceTiers?: string[];
+  supportsResponsesWs?: boolean;
+  supportsCompact?: boolean;
   yes?: boolean;
 };
 
@@ -35,14 +47,48 @@ export async function inviteFriend(
   username: string,
   options: InviteOptions,
 ): Promise<number> {
+  const hasCaps =
+    options.requestsPerDay !== undefined ||
+    options.tokensPerDay !== undefined ||
+    options.maxConcurrentRequests !== undefined;
+  if (
+    options.fullAccess &&
+    (hasCaps ||
+      options.models ||
+      options.allModels ||
+      options.unlimited ||
+      options.routes ||
+      options.serviceTiers ||
+      options.supportsResponsesWs ||
+      options.supportsCompact)
+  ) {
+    throw new Error(
+      "Use --full-access without other model, route, tier, or limit options.",
+    );
+  }
+  if (options.unlimited && hasCaps) {
+    throw new Error(
+      "--unlimited cannot be combined with request, token, or concurrency limits.",
+    );
+  }
+  if (options.allModels && options.models) {
+    throw new Error("Choose --all-models or --models, not both.");
+  }
+  if (options.models?.includes("*")) {
+    throw new Error(
+      "Use --all-models to select available models; '*' is not a model wildcard.",
+    );
+  }
   const credentials = await readCredentials();
   if (!credentials) throw new Error("Run `mainroom auth signup` first.");
   const interactive = Boolean(process.stdin.isTTY && !options.yes);
+  const allModels = options.allModels || options.fullAccess;
+  let unlimited = options.unlimited || options.fullAccess;
   let models = options.models;
   let requests = options.requestsPerDay;
-  if ((!models || requests === undefined) && !interactive) {
+  if (((!models && !allModels) || (!hasCaps && !unlimited)) && !interactive) {
     throw new Error(
-      "Pass --models and --requests-per-day when running without prompts.",
+      "Pass --models or --all-models with a limit or --unlimited, or use --full-access, when running without prompts.",
     );
   }
   if (!models) {
@@ -62,31 +108,54 @@ export async function inviteFriend(
       throw new Error(
         "No ready Codex models found. Run `mainroom codex status`, or pass --models for another provider.",
       );
-    models = await checkbox({
-      message: `Models to share with ${username}`,
-      choices: available.map((value) => ({ value })),
-      required: true,
-    });
+    if (allModels) {
+      models = available;
+      console.log(
+        "Selecting all models currently reported by ready Codex accounts; rerun to include newly available models.",
+      );
+    } else {
+      models = await checkbox({
+        message: `Models to share with ${username}`,
+        choices: available.map((value) => ({ value })),
+        required: true,
+      });
+    }
   }
-  if (requests === undefined) {
-    requests = await number({
-      message: "Maximum requests per UTC day",
-      min: 1,
-      required: true,
-      validate: (value) =>
-        Number.isSafeInteger(value) || "Enter a whole number.",
+  if (!hasCaps && !unlimited) {
+    unlimited = await confirm({
+      message: "Share without Mainroom request, token, or concurrency limits?",
+      default: false,
     });
+    if (!unlimited) {
+      requests = await number({
+        message: "Maximum requests per UTC day",
+        min: 1,
+        required: true,
+        validate: (value) =>
+          Number.isSafeInteger(value) || "Enter a whole number.",
+      });
+    }
   }
   const body = {
     models,
-    routes: ["responses"],
-    service_tiers: options.serviceTiers,
-    limits: { requests_per_day: requests },
+    routes: options.fullAccess
+      ? [...shareRoutes]
+      : (options.routes ?? ["responses"]),
+    service_tiers: options.fullAccess
+      ? ["auto", "default", "priority", "flex", "fast"]
+      : (options.serviceTiers ?? ["auto"]),
+    supports_responses_ws: options.fullAccess || options.supportsResponsesWs,
+    supports_compact: options.fullAccess || options.supportsCompact,
+    limits: {
+      requests_per_day: requests,
+      tokens_per_day: options.tokensPerDay,
+      max_concurrent_requests: options.maxConcurrentRequests,
+    },
   };
   const input = normalizeShareGrantInput(body);
   if ("error" in input) throw new Error(input.error);
   console.log(
-    `Share with ${username}: ${input.models.join(", ")} | Responses | tiers ${input.serviceTiers.join(", ")} | ${requests} requests/day (UTC).`,
+    `Share with ${username}: ${input.models.join(", ")} | ${input.routes.join(", ")} | tiers ${input.serviceTiers.join(", ")} | ${input.limits.requestsPerDay ?? "unlimited"} requests/day | ${input.limits.tokensPerDay ?? "unlimited"} reserved output tokens/day (UTC) | ${input.limits.maxConcurrentRequests ?? "unlimited"} concurrent requests | Responses WebSocket ${input.supportsResponsesWs ? "enabled" : "disabled"} | compact ${input.supportsCompact ? "enabled" : "disabled"}.`,
   );
   console.log(
     "Access starts immediately and replaces any existing share for this friend.",

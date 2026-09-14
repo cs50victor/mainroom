@@ -2,6 +2,8 @@ import { Scalar } from "@scalar/hono-api-reference";
 import { Hono, type Context } from "hono";
 import { accepts } from "hono/accepts";
 
+import { DashboardPage } from "./site/dashboard-page";
+import dashboardScript from "./site/dashboard.js" with { type: "text" };
 import { HomePage } from "./site/home-page";
 import { GuidePage } from "./site/guide-page";
 import { origin, overview, pages, skill } from "./site/content";
@@ -64,6 +66,20 @@ export function createPublicSite(): Hono {
     c.header("Vary", "Accept", { append: true });
     if (markdownPreferred(c)) return markdownResponse(c, overview);
     return c.html(homepage);
+  });
+
+  site.get("/dashboard", (c) => {
+    c.header("Cache-Control", "no-store");
+    c.header("X-Content-Type-Options", "nosniff");
+    c.header("Referrer-Policy", "same-origin");
+    return c.html(DashboardPage().toString());
+  });
+  site.get("/dashboard/", (c) => c.redirect("/dashboard", 308));
+  site.get("/dashboard.js", (c) => {
+    c.header("Cache-Control", "public, max-age=300");
+    c.header("Content-Type", "text/javascript; charset=utf-8");
+    c.header("X-Content-Type-Options", "nosniff");
+    return c.body(dashboardScript);
   });
 
   for (const page of pages) {

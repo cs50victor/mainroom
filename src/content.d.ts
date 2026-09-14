@@ -13,6 +13,11 @@ declare module "*copy-prompt.js" {
   export default content;
 }
 
+declare module "*dashboard.js" {
+  const content: string;
+  export default content;
+}
+
 declare module "*.woff2" {
   const content: string | ArrayBuffer;
   export default content;

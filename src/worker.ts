@@ -32,6 +32,7 @@ import {
 } from "./fly-machines";
 import { apiKeySchema, errorSchema } from "./schemas/api-keys";
 import { checkCodexAccount } from "./codex-accounts";
+import { dashboardSubject } from "./dashboard-auth";
 import {
   codexAccountsSchema,
   codexAccountParamSchema,
@@ -944,6 +945,42 @@ const requireApiKeySubject = createMiddleware<WorkerHonoEnv>(
     await next();
   },
 );
+
+const requireDashboardSubject = createMiddleware<WorkerHonoEnv>(
+  async (c, next) => {
+    c.header("Cache-Control", "private, no-store");
+    try {
+      c.set(
+        "subject",
+        await dashboardSubject(workerAppConfig(c.env), c.req.raw),
+      );
+    } catch {
+      return c.json({ error: "Sign in to Mainroom" }, 401);
+    }
+    await next();
+  },
+);
+
+async function dashboardRuntime(
+  c: WorkerContext,
+  path: string,
+): Promise<Response> {
+  try {
+    const response = await userMachineStub(
+      c.env,
+      machineId(c.var.subject),
+    ).fetch(
+      new Request(`https://tokenproxy${path}`, {
+        signal: AbortSignal.timeout(20000),
+      }),
+    );
+    if (!response.ok)
+      return c.json({ error: "Your account endpoint is unavailable" }, 502);
+    return c.json(await response.json());
+  } catch {
+    return c.json({ error: "Your account endpoint is unavailable" }, 502);
+  }
+}
 
 async function listShareProviders(c: WorkerContext): Promise<Response> {
   const response = await shareStore(c.env).fetch(
@@ -1993,6 +2030,60 @@ workerApp.all("/v0/auth/cli/config", methodNotAllowed);
 
 workerApp.post("/v0/auth/cli/exchange", cliAuthExchange);
 workerApp.all("/v0/auth/cli/exchange", methodNotAllowed);
+
+workerApp.get("/v0/auth/web/config", (c) => {
+  c.header("Cache-Control", "no-store");
+  const publishableKey = c.env.CLERK_PUBLISHABLE_KEY;
+  if (!publishableKey)
+    return c.json({ error: "Website sign-in is not configured" }, 503);
+  return c.json({ publishableKey });
+});
+workerApp.all("/v0/auth/web/config", methodNotAllowed);
+workerApp.use("/v0/dashboard/*", requireDashboardSubject);
+workerApp.get("/v0/dashboard/accounts", codexAccounts);
+workerApp.patch(
+  "/v0/dashboard/accounts/:uploadName",
+  zValidator("param", codexAccountParamSchema),
+  zValidator("json", codexAccountUpdateSchema),
+  async (c) => {
+    const enabled = c.req.valid("json").enabled;
+    const response = await setCodexAccountEnabled(
+      c,
+      c.req.valid("param").uploadName,
+      enabled,
+    );
+    if (!response.ok || !enabled) return response;
+    const reconcile = await reconcileConsumerMachine(
+      c.env,
+      c.var.subject,
+    ).catch(() => ({
+      error:
+        "Account enabled, but the endpoint could not be updated. Retry enabling the account.",
+    }));
+    return c.json({
+      uploadName: c.req.valid("param").uploadName,
+      enabled,
+      reconcile,
+    });
+  },
+);
+workerApp.get("/v0/dashboard/models", (c) => dashboardRuntime(c, "/v1/models"));
+workerApp.get("/v0/dashboard/usage", (c) => dashboardRuntime(c, "/usage"));
+workerApp.get("/v0/dashboard/shares/providers", listShareProviders);
+workerApp.get("/v0/dashboard/shares/consumers/me", listConsumerShares);
+workerApp.put(
+  "/v0/dashboard/shares/providers/:consumerUsername",
+  upsertProviderShare,
+);
+workerApp.patch(
+  "/v0/dashboard/shares/providers/:consumerUsername",
+  updateProviderShare,
+);
+workerApp.delete(
+  "/v0/dashboard/shares/providers/:consumerUsername",
+  deleteProviderShare,
+);
+workerApp.all("/v0/dashboard/*", (c) => c.json({ error: "Not found" }, 404));
 
 workerApp.use("/v0/shares/providers", requireApiKeySubject);
 workerApp.use("/v0/shares/consumers/me", requireApiKeySubject);
