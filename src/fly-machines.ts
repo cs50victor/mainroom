@@ -1,3 +1,5 @@
+import { codexModelsRequest, type CodexAccountAuth } from "./codex-accounts";
+
 export type FlyMachine = {
   id?: unknown;
   instance_id?: unknown;
@@ -197,4 +199,60 @@ export function flyMachineFetch(
       signal: request.signal,
     }),
   );
+}
+
+export async function flyCodexModels(
+  fly: FlyMachineConfig,
+  machineId: string,
+  auth: CodexAccountAuth,
+): Promise<Response> {
+  try {
+    const request = codexModelsRequest(auth);
+    const command = [
+      "curl",
+      "-q",
+      "--silent",
+      "--show-error",
+      "--connect-timeout",
+      "5",
+      "--max-time",
+      "10",
+      "--proto",
+      "=https",
+      "--max-redirs",
+      "0",
+      "--write-out",
+      "\n%{http_code}",
+    ];
+    for (const [name, value] of request.headers) {
+      if (/[\r\n\0]/.test(value)) throw new Error("Invalid header");
+      command.push("--header", `${name}: ${value}`);
+    }
+    command.push("--url", request.url);
+    const result = await flyMachineApi<{
+      stdout?: unknown;
+      exit_code?: unknown;
+      exit_signal?: unknown;
+    }>(fly, `/machines/${encodeURIComponent(machineId)}/exec`, {
+      method: "POST",
+      body: JSON.stringify({ command, timeout: 15 }),
+      signal: AbortSignal.timeout(20000),
+    });
+    if (
+      result.exit_code !== 0 ||
+      result.exit_signal !== 0 ||
+      typeof result.stdout !== "string"
+    )
+      throw new Error("Probe failed");
+    const separator = result.stdout.lastIndexOf("\n");
+    const status = result.stdout.slice(separator + 1);
+    if (separator < 0 || !/^[2-5][0-9]{2}$/.test(status))
+      throw new Error("Invalid provider response");
+    return new Response(result.stdout.slice(0, separator), {
+      status: Number(status),
+    });
+  } catch {
+    // Fly errors can echo exec arguments containing credentials.
+    throw new Error("Could not check Codex access from the inference machine.");
+  }
 }

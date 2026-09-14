@@ -100,6 +100,17 @@ async function fixture() {
       get: (name: string) => {
         expect(name).toContain("account-owner");
         return {
+          checkCodexModels: async (
+            subject: string,
+            auth: { accountId: string; accessToken: string },
+          ) => {
+            expect(subject).toBe("account-owner");
+            expect(auth).toMatchObject({
+              accountId: "workspace",
+              accessToken: "private-token",
+            });
+            return Response.json({ models: [{ slug: "runtime-model" }] });
+          },
           stop: async () => {
             stops++;
           },
@@ -135,6 +146,9 @@ async function fixture() {
   return {
     call,
     objects,
+    blockEdge: () => {
+      providerStatus = 403;
+    },
     setReady: () => {
       providerStatus = 200;
     },
@@ -225,4 +239,17 @@ test("reconnecting requires working credentials before removing disable marker",
   expect(await (await f.call("/v0/tokenproxy/config/me")).text()).toContain(
     "saved.json",
   );
+});
+
+test("account routes use the owner's runtime when edge model discovery is blocked", async () => {
+  const f = await fixture();
+  f.blockEdge();
+  const response = await f.call("/v0/tokenproxy/accounts");
+  expect(response.status).toBe(200);
+  expect((await response.json()).accounts).toMatchObject([
+    { status: "ready", models: ["runtime-model"] },
+  ]);
+  expect(
+    (await f.call("/v0/tokenproxy/accounts/saved.json", true)).status,
+  ).toBe(200);
 });

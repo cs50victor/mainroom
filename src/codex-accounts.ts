@@ -1,14 +1,14 @@
 import { decode } from "hono/jwt";
 import type { CodexAccountStatus } from "./schemas/codex-accounts";
 
-export function codexAuthIdentity(text: string):
-  | {
-      accountId: string;
-      accessToken: string;
-      email?: string;
-      expiresAt?: string;
-    }
-  | undefined {
+export type CodexAccountAuth = {
+  accountId: string;
+  accessToken: string;
+  email?: string;
+  expiresAt?: string;
+};
+
+export function codexAuthIdentity(text: string): CodexAccountAuth | undefined {
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -22,7 +22,8 @@ export function codexAuthIdentity(text: string):
     typeof tokens.account_id !== "string" ||
     !tokens.account_id ||
     typeof tokens.access_token !== "string" ||
-    !tokens.access_token
+    !tokens.access_token ||
+    /[\x00-\x1f\x7f]/.test(tokens.account_id + tokens.access_token)
   )
     return undefined;
   const access = jwtClaims(tokens.access_token);
@@ -65,6 +66,7 @@ export async function checkCodexAccount(
   uploadName: string,
   text: string,
   disabled = false,
+  fallback?: (auth: CodexAccountAuth) => Promise<Response>,
 ): Promise<CodexAccountStatus> {
   const auth = codexAuthIdentity(text);
   const identity = {
@@ -81,20 +83,11 @@ export async function checkCodexAccount(
       detail: "Unrecognized Codex credential file",
     };
   try {
-    // Match tokenproxy v0.1.16's account discovery request.
-    const response = await fetch(
-      "https://chatgpt.com/backend-api/codex/models?client_version=0.141.0",
-      {
-        headers: {
-          authorization: `Bearer ${auth.accessToken}`,
-          "chatgpt-account-id": auth.accountId,
-          "user-agent": "codex-cli",
-          originator: "codex_cli_rs",
-        },
-        redirect: "manual",
-        signal: AbortSignal.timeout(10000),
-      },
-    );
+    let response = await fetch(codexModelsRequest(auth));
+    if (response.status === 403 && fallback) {
+      await response.body?.cancel();
+      response = await fallback(auth);
+    }
     if (response.status === 401) {
       await response.body?.cancel();
       return {
@@ -138,4 +131,20 @@ export async function checkCodexAccount(
       detail: "Could not check Codex access; retry later.",
     };
   }
+}
+
+export function codexModelsRequest(auth: CodexAccountAuth): Request {
+  return new Request(
+    "https://chatgpt.com/backend-api/codex/models?client_version=0.141.0",
+    {
+      headers: {
+        authorization: `Bearer ${auth.accessToken}`,
+        "chatgpt-account-id": auth.accountId,
+        "user-agent": "codex-cli",
+        originator: "codex_cli_rs",
+      },
+      redirect: "manual",
+      signal: AbortSignal.timeout(10000),
+    },
+  );
 }
