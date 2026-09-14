@@ -23,6 +23,7 @@ jobs:
       - run: bun run build:css
       - run: bun run lint
       - run: bun run typecheck
+      - run: bunx --no-install wrangler deploy --dry-run --outdir /tmp/mainroom-worker-build
       - run: bun test
       - run: docker build -t mainroom-bun-server .
       - run: docker build -f Dockerfile.user-machine -t mainroom-user-machine .
